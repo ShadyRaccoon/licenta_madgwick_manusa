@@ -191,14 +191,17 @@ void loop() {
   // put your main code here, to run repeatedly:
   get_raw_data(PALM_CHANNEL, aX_palm, aY_palm, aZ_palm, gX_palm, gY_palm, gZ_palm);
   calibrate(gX_palm, gY_palm, gZ_palm, offX_palm, offY_palm, offZ_palm);
+  filter_palm.updateIMU(gX_palm, gY_palm, gZ_palm, aX_palm, aY_palm, aZ_palm);
   print_data("palma", aX_palm, aY_palm, aZ_palm, gX_palm, gY_palm, gZ_palm);
 
   get_raw_data(FA_CHANNEL, aX_fa, aY_fa, aZ_fa, gX_fa, gY_fa, gZ_fa);
   calibrate(gX_fa, gY_fa, gZ_fa, offX_fa, offY_fa, offZ_fa);
+  filter_fa.updateIMU(gX_fa, gY_fa, gZ_fa, aX_fa, aY_fa, aZ_fa);
   print_data("antebrat", aX_fa, aY_fa, aZ_fa, gX_fa, gY_fa, gZ_fa);
 
   get_raw_data(UA_CHANNEL, aX_ua, aY_ua, aZ_ua, gX_ua, gY_ua, gZ_ua);
   calibrate(gX_ua, gY_ua, gZ_ua, offX_ua, offY_ua, offZ_ua);
+  filter_fa.updateIMU(gX_ua, gY_ua, gZ_ua, aX_ua, aY_ua, aZ_ua);
   print_data("bratul superior", aX_ua, aY_ua, aZ_ua, gX_ua, gY_ua, gZ_ua);
 
   delay(500);
