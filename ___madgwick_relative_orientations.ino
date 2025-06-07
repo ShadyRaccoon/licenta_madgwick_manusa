@@ -242,10 +242,9 @@ void setup() {
   Wire.begin();
   delay(250);
 
-  prefs.begin("gyroCal", false);
+  prefs.begin("gyroCal", true);
   bool isCalibrated = prefs.getBool("calibrated", false);
-  bool flexReference = prefs.getBool("flexRange", false);
-
+  prefs.end();
   if(!isCalibrated){
     Serial.println("Senzori necalibrati...");
     Serial.println("Calibrare...");
@@ -275,6 +274,7 @@ void setup() {
 
     Serial.println("== Calibrare completa. Salvare in flash... ==");
 
+    prefs.begin("gyroCal", false);
     prefs.putFloat("pX", offX_palm);
     prefs.putFloat("pY", offY_palm);
     prefs.putFloat("pZ", offZ_palm);
@@ -294,20 +294,28 @@ void setup() {
     while(true){}
   }
 
-  if(!flexReference){
+  prefs.begin("flexRange", true);
+  bool flexRoM = prefs.getBool("flexRoM", false);
+  prefs.end();
+  if(!flexRoM){
     Serial.println("Senzori de rezistenta necalibrati...");
     Serial.println("Calibrare...");
 
     int start = millis();
 
-    // TO DO - ADD LED OUTPUT TO SIGNAL WHEN TO MOVE HAND
+    // TO DO - ADD  OUTPUT TO SIGNAL WHEN TO MOVE HAND
+    Serial.println("Miscati degetele pentru RoM a senzorilor de rezistenta");
+    led_color(255, 0, 0);
 
     while(millis() - start < FLEX_REFERENCE_TIME){
       get_flex_values();
     }
 
     save_flex_range();
-
+    prefs.begin("flexRange", false);
+    prefs.putBool("flexRoM", true);
+    prefs.end();
+    
     Serial.println(">>> RoM senzori de rezistenta salvat. Reporniti alimentarea <<<");
 
     Serial.println("=== Flex Sensors Range of Motion ===");
@@ -349,6 +357,7 @@ void setup() {
 
   Serial.println("== Calibrare... ==");
 
+  prefs.begin("gyroCal",true);
   offX_palm = prefs.getFloat("pX", 0.0f);
   offY_palm = prefs.getFloat("pY", 0.0f);
   offZ_palm = prefs.getFloat("pZ", 0.0f);
@@ -360,8 +369,9 @@ void setup() {
   offX_ua   = prefs.getFloat("uX", 0.0f);
   offY_ua   = prefs.getFloat("uY", 0.0f);
   offZ_ua   = prefs.getFloat("uZ", 0.0f);
-
   prefs.end();
+
+  load_flex_range();
 
   Serial.println(">>> Senzori calibrati <<<");
 
@@ -418,7 +428,7 @@ void loop() {
   if( millis() - last_print >= 1000){
     print_gyro("palma", gX_palm, gY_palm, gZ_palm);
     print_accel("palma", aX_palm, aY_palm, aZ_palm);
-    print_angles_quaternions("palma ", q0_palm, q1_palm, q2_palm, q3_palm, rofll_palm, pitch_palm, yaw_palm);
+    print_angles_quaternions("palma ", q0_palm, q1_palm, q2_palm, q3_palm, roll_palm, pitch_palm, yaw_palm);
     
     print_gyro("antebrat", gX_fa, gY_fa, gZ_fa);
     print_accel("antebrat", aX_fa, aY_fa, aZ_fa);
