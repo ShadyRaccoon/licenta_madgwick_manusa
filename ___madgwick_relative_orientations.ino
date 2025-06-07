@@ -51,6 +51,12 @@ float roll_ua, pitch_ua, yaw_ua;
 
 Madgwick filter_palm, filter_fa, filter_ua;
 
+void led_color(int red, int green, int blue){
+  analogWrite(RED, red);
+  analogWrite(GREEN, green);
+  analogWrite(BLUE, blue);
+}
+
 void mpu_config(){
   Wire.beginTransmission(0x68);
   Wire.write(0x6B);
@@ -228,6 +234,10 @@ void setup() {
 
   Serial.begin(115200);
 
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(BLUE, OUTPUT);
+
   Wire.setClock(400000);
   Wire.begin();
   delay(250);
@@ -290,7 +300,7 @@ void setup() {
 
     int start = millis();
 
-    
+    // TO DO - ADD LED OUTPUT TO SIGNAL WHEN TO MOVE HAND
 
     while(millis() - start < FLEX_REFERENCE_TIME){
       get_flex_values();
