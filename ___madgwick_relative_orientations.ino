@@ -10,6 +10,8 @@
 #define INDEX 2
 #define LITTLE 15
 
+#define FLEX_REFERENCE_TIME 5000
+
 #define CAL_SAMPLES 150
 
 #define FA 0
@@ -20,6 +22,10 @@
 #define SAMPLE_FREQ 100
 
 Preferences prefs;
+
+int thumb_min = 4095, thumb_max = 0;
+int index_min = 4095, index_max = 0;
+int little_min = 4095, little_max = 0;
 
 long last_print = 0;
 
@@ -168,6 +174,55 @@ void print_angles_quaternions(char *segment, float q0, float q1, float q2, float
   Serial.printf(" Euler R/P/Y (%s): [%.1f°,  %.1f°,  %.1f°]\n\n", segment, roll, pitch, yaw);
 }
 
+void get_flex_values(){
+  int thumb_val = analogRead(THUMB);
+  int index_val = analogRead(INDEX);
+  int little_val = analogRead(LITTLE);
+
+  thumb_min = min(thumb_min, thumb_val);
+  thumb_max = max(thumb_max, thumb_val);
+
+  index_min = min(index_min, index_val);
+  index_max = max(index_max, index_val);
+
+  little_min = min(little_min, little_val);
+  little_max = max(little_max, little_val);
+}
+
+void save_flex_range(){
+  prefs.begin("flexRange", false);
+
+  prefs.putInt("thumb_min", thumb_min);
+  prefs.putInt("thumb_max", thumb_max);
+
+  prefs.putInt("index_min", index_min);
+  prefs.putInt("index_max", index_max);
+
+  prefs.putInt("little_min", little_min);
+  prefs.putInt("little_max", little_max);
+
+  prefs.end();
+
+  Serial.println("RoM of flex sensors saved.");
+}
+
+void load_flex_range(){
+  prefs.begin("flexRange", true);
+
+  thumb_min = prefs.getInt("thumb_min", 4095);
+  thumb_max = prefs.getInt("thumb_max", 0);
+
+  index_min = prefs.getInt("index_min", 4095);
+  index_max = prefs.getInt("index_max", 0);
+
+  little_min = prefs.getInt("little_min", 4095);
+  little_max = prefs.getInt("little_max", 0);
+
+  prefs.end();
+
+  Serial.println("RoM of flex sensors loaded.");
+}
+
 void setup() {
   // put your setup code here, to run once:
 
@@ -179,6 +234,7 @@ void setup() {
 
   prefs.begin("gyroCal", false);
   bool isCalibrated = prefs.getBool("calibrated", false);
+  bool flexReference = prefs.getBool("flexRange", false);
 
   if(!isCalibrated){
     Serial.println("Senzori necalibrati...");
@@ -226,44 +282,83 @@ void setup() {
 
     Serial.println(">>> Date de calibrare salvate. Reporniti alimentarea <<<");
     while(true){}
-  }else{
-    mux_channel(PALM);
-    delay(10);
-    mpu_config();
-    delay(10);
-
-    mux_channel(FA);
-    delay(10);
-    mpu_config();
-    delay(10);
-
-    mux_channel(UA);
-    delay(10);
-    mpu_config();
-    delay(10);
-
-    Serial.println("== Calibrare... ==");
-
-    offX_palm = prefs.getFloat("pX", 0.0f);
-    offY_palm = prefs.getFloat("pY", 0.0f);
-    offZ_palm = prefs.getFloat("pZ", 0.0f);
-
-    offX_fa   = prefs.getFloat("fX", 0.0f);
-    offY_fa   = prefs.getFloat("fY", 0.0f);
-    offZ_fa   = prefs.getFloat("fZ", 0.0f);
-
-    offX_ua   = prefs.getFloat("uX", 0.0f);
-    offY_ua   = prefs.getFloat("uY", 0.0f);
-    offZ_ua   = prefs.getFloat("uZ", 0.0f);
-
-    prefs.end();
-
-    Serial.println(">>> Senzori calibrati <<<");
-
-    filter_palm.begin(SAMPLE_FREQ);
-    filter_fa.begin(SAMPLE_FREQ);
-    filter_ua.begin(SAMPLE_FREQ);
   }
+
+  if(!flexReference){
+    Serial.println("Senzori de rezistenta necalibrati...");
+    Serial.println("Calibrare...");
+
+    int start = millis();
+
+    
+
+    while(millis() - start < FLEX_REFERENCE_TIME){
+      get_flex_values();
+    }
+
+    save_flex_range();
+
+    Serial.println(">>> RoM senzori de rezistenta salvat. Reporniti alimentarea <<<");
+
+    Serial.println("=== Flex Sensors Range of Motion ===");
+
+    Serial.print("Thumb Sensor RoM: Min = ");
+    Serial.print(thumb_min);
+    Serial.print(", Max = ");
+    Serial.println(thumb_max);
+
+    Serial.print("Index Sensor RoM: Min = ");
+    Serial.print(index_min);
+    Serial.print(", Max = ");
+    Serial.println(index_max);
+
+    Serial.print("Little Sensor RoM: Min = ");
+    Serial.print(little_min);
+    Serial.print(", Max = ");
+    Serial.println(little_max);
+
+    Serial.println("=====================================");
+
+    while(true){};
+  }
+
+  mux_channel(PALM);
+  delay(10);
+  mpu_config();
+  delay(10);
+
+  mux_channel(FA);
+  delay(10);
+  mpu_config();
+  delay(10);
+
+  mux_channel(UA);
+  delay(10);
+  mpu_config();
+  delay(10);
+
+  Serial.println("== Calibrare... ==");
+
+  offX_palm = prefs.getFloat("pX", 0.0f);
+  offY_palm = prefs.getFloat("pY", 0.0f);
+  offZ_palm = prefs.getFloat("pZ", 0.0f);
+
+  offX_fa   = prefs.getFloat("fX", 0.0f);
+  offY_fa   = prefs.getFloat("fY", 0.0f);
+  offZ_fa   = prefs.getFloat("fZ", 0.0f);
+
+  offX_ua   = prefs.getFloat("uX", 0.0f);
+  offY_ua   = prefs.getFloat("uY", 0.0f);
+  offZ_ua   = prefs.getFloat("uZ", 0.0f);
+
+  prefs.end();
+
+  Serial.println(">>> Senzori calibrati <<<");
+
+  filter_palm.begin(SAMPLE_FREQ);
+  filter_fa.begin(SAMPLE_FREQ);
+  filter_ua.begin(SAMPLE_FREQ);
+  
 }
 
 void loop() {
