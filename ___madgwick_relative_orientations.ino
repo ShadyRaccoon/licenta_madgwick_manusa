@@ -1,3 +1,12 @@
+/*
+        TO DO 
+      
+        * CALIBRATE GYROSCOPES
+        * GATHER FLEX SENSORS RANGE
+        * GATHER NEUTRAL OF MPU'S
+        * GATHER RoM OF PALM -> MIN/MAX PITCH/ROLL AND QUATERNIONS
+*/
+
 #include <Wire.h>
 #include <Preferences.h>
 #include <MadgwickAHRS.h>
@@ -10,7 +19,9 @@
 #define INDEX 2
 #define LITTLE 15
 
-#define FLEX_REFERENCE_TIME 5000
+#define WAIT 3000
+#define FLEX_REFERENCE_TIME 10000
+#define NEUTRAL_REFERENCE_TIME 10000
 
 #define CAL_SAMPLES 150
 
@@ -26,6 +37,10 @@ Preferences prefs;
 int thumb_min = 4095, thumb_max = 0;
 int index_min = 4095, index_max = 0;
 int little_min = 4095, little_max = 0;
+
+float q0_palm_neutral, q1_palm_neutral, q2_palm_neutral, q3_palm_neutral;
+float q0_fa_neutral, q1_fa_neutral, q2_fa_neutral, q3_fa_neutral;
+float q0_ua_neutral, q1_ua_neutral, q2_ua_neutral, q3_ua_neutral;
 
 long last_print = 0;
 
@@ -229,6 +244,47 @@ void load_flex_range(){
   Serial.println("RoM of flex sensors loaded.");
 }
 
+void load_gyro_offsets(){
+
+}
+
+void save_neutral_pose(){
+  prefs.begin("neutralPose", false);
+  prefs.putFloat("pW", q0_palm_neutral);
+  prefs.putFloat("pX", q1_palm_neutral);
+  prefs.putFloat("pY", q2_palm_neutral);
+  prefs.putFloat("pZ", q3_palm_neutral);
+  prefs.putFloat("fW", q0_fa_neutral);
+  prefs.putFloat("fX", q1_fa_neutral);
+  prefs.putFloat("fY", q2_fa_neutral);
+  prefs.putFloat("fZ", q3_fa_neutral);
+  prefs.putFloat("uW", q0_ua_neutral);
+  prefs.putFloat("uX", q1_ua_neutral);
+  prefs.putFloat("uY", q2_ua_neutral);
+  prefs.putFloat("uZ", q3_ua_neutral);
+  prefs.putBool("neutral_pose", true);
+  prefs.end();
+}
+
+void load_neutral_pose(){
+  prefs.begin("neutralPose", true);
+  q0_palm_neutral = prefs.getFloat("pW", 1.0f);
+  q1_palm_neutral = prefs.getFloat("pX", 0.0f);
+  q2_palm_neutral = prefs.getFloat("pY", 0.0f);
+  q3_palm_neutral = prefs.getFloat("pZ", 0.0f);
+  q0_fa_neutral = prefs.getFloat("fW", 1.0f);
+  q1_fa_neutral = prefs.getFloat("fX", 0.0f);
+  q2_fa_neutral = prefs.getFloat("fY", 0.0f);
+  q3_fa_neutral = prefs.getFloat("fZ", 0.0f);
+  q0_ua_neutral = prefs.getFloat("uW", 1.0f);
+  q1_ua_neutral = prefs.getFloat("uX", 0.0f);
+  q2_ua_neutral = prefs.getFloat("uY", 0.0f);
+  q3_ua_neutral = prefs.getFloat("uZ", 0.0f);
+  prefs.end();
+
+  Serial.println("Neutral reference loaded.");
+}
+
 void setup() {
   // put your setup code here, to run once:
 
@@ -246,6 +302,8 @@ void setup() {
   bool isCalibrated = prefs.getBool("calibrated", false);
   prefs.end();
   if(!isCalibrated){
+    led_color(255, 0, 255);
+
     Serial.println("Senzori necalibrati...");
     Serial.println("Calibrare...");
 
@@ -305,7 +363,7 @@ void setup() {
 
     // TO DO - ADD  OUTPUT TO SIGNAL WHEN TO MOVE HAND
     Serial.println("Miscati degetele pentru RoM a senzorilor de rezistenta");
-    led_color(255, 0, 0);
+    led_color(255, 0, 255);
 
     while(millis() - start < FLEX_REFERENCE_TIME){
       get_flex_values();
@@ -340,6 +398,98 @@ void setup() {
     while(true){};
   }
 
+  prefs.begin("neutralPose", true);
+  bool neutral_pose = prefs.getBool("neutral_pose", false);
+  prefs.end();
+  if(!neutral_pose){
+    Serial.println("Referinta in pozitie neutra lipsa...");
+    Serial.println("Va rugam sa tineti mana in jos cu interiorul palmei \n inspre sold pe durata luminii intermitente mov,\n dupa incheierea luminii intermitente portocalii...");
+
+    {
+      int flip = 0;
+      int flip_timer = millis();
+      int start = millis();
+
+      //wait - blink orange
+      //let user prepare neutral hand pose
+      while(millis() - start < WAIT) {
+        if(flip % 2 == 0) {
+          led_color(255, 165, 0); 
+        } else {
+          led_color(0, 0, 0);
+        }
+
+        if(millis() - flip_timer >= 300){
+          flip++;
+          flip_timer = millis();
+        }
+      }
+    }
+
+    start = millis();
+    int samples = 0;
+    float sumPw = 0, sumPx = 0, sumPy = 0, sumPz = 0;
+    float sumFw = 0, sumFx = 0, sumFy = 0, sumFz = 0;
+    float sumUw = 0, sumUx = 0, sumUy = 0, sumUz = 0;
+
+    led_color(255, 0, 255);
+    while(millis() - start < NEUTRAL_REFERENCE_TIME){
+      mux_channel(PALM);
+      gyro_data(&gX_palm, &gY_palm, &gZ_palm);
+      accel_data(&aX_palm, &aY_palm, &aZ_palm);
+      filter_palm.updateIMU(gX_palm, gY_palm, gZ_palm, aX_palm, aY_palm, aZ_palm);
+      sumPw += filter_palm.getQuaternion0();
+      sumPx += filter_palm.getQuaternion1();
+      sumPy += filter_palm.getQuaternion2();
+      sumPz += filter_palm.getQuaternion3();
+
+      mux_channel(FA);
+      gyro_data(&gX_fa, &gY_fa, &gZ_fa);
+      accel_data(&aX_fa, &aY_fa, &aZ_fa);
+      filter_fa.updateIMU(gX_fa, gY_fa, gZ_fa, aX_fa, aY_fa, aZ_fa);
+      sumFw += filter_fa.getQuaternion0();
+      sumFx += filter_fa.getQuaternion1();
+      sumFy += filter_fa.getQuaternion2();
+      sumFz += filter_fa.getQuaternion3();
+      
+      mux_channel(UA);
+      gyro_data(&gX_ua, &gY_ua, &gZ_ua);
+      accel_data(&aX_ua, &aY_ua, &aZ_ua);
+      filter_ua.updateIMU(gX_ua, gY_ua, gZ_ua, aX_ua, aY_ua, aZ_ua);
+      sumUw += filter_ua.getQuaternion0();
+      sumUx += filter_ua.getQuaternion1();
+      sumUy += filter_ua.getQuaternion2();
+      sumUz += filter_ua.getQuaternion3();
+
+      samples++;
+
+      delay(10);
+    }
+
+    q0_palm_neutral = sumPw / samples;
+    q1_palm_neutral = sumPx / samples;
+    q2_palm_neutral = sumPy / samples;
+    q3_palm_neutral = sumPz / samples; 
+
+    q0_fa_neutral = sumFw / samples;
+    q1_fa_neutral = sumFx / samples;
+    q2_fa_neutral = sumFy / samples;
+    q3_fa_neutral = sumFz / samples;
+
+    q0_ua_neutral = sumUw / samples;
+    q1_ua_neutral = sumUx / samples;
+    q2_ua_neutral = sumUy / samples;
+    q3_ua_neutral = sumUz / samples;
+
+    save_neutral_pose();
+  }
+
+  /*
+  >>>>>>>>> TO DO <<<<<<<<<
+  --------> CALIBRATION PHASE AND RoM CAPTURE FOR NEUTRAL HAND POSE (HAND HANGING DOWN PARALLEL TO BODY)
+  --------> CALIBRATION PHASE AND RoM CAPTURE FOR PALM EXTENSION/FLEXION/SUPINATION/PRONATION (MIN ROLL/MAX ROLL/MIN PITCH/MAX PITCH/QUATERNION IN CRT FRAME/QUATERNION IN NEUTRAL FRAME)
+  */
+
   mux_channel(PALM);
   delay(10);
   mpu_config();
@@ -372,6 +522,8 @@ void setup() {
   prefs.end();
 
   load_flex_range();
+
+  load_neutral_pose();
 
   Serial.println(">>> Senzori calibrati <<<");
 
