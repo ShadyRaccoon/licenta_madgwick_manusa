@@ -2,6 +2,14 @@
 #include <Preferences.h>
 #include <MadgwickAHRS.h>
 
+#define RED 5
+#define GREEN 18
+#define BLUE 23
+
+#define THUMB 4
+#define INDEX 2
+#define LITTLE 15
+
 #define CAL_SAMPLES 150
 
 #define FA 0
