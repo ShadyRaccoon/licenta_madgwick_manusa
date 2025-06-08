@@ -72,6 +72,28 @@ void led_color(int red, int green, int blue){
   analogWrite(BLUE, blue);
 }
 
+void led_wait(){
+  unsigned long start = millis();
+  unsigned long lastToggle = start;
+  bool on = true;
+
+  while (millis() - start < WAIT) {
+    if (millis() - lastToggle >= 300) {
+      on = !on;
+      lastToggle = millis();
+      if (on) {
+        led_color(255, 165, 0);
+      } else {
+        led_color(0, 0, 0);
+      }
+    }
+  }
+}
+
+void led_hold(){
+  led_color(255, 0, 255);
+}
+
 void mpu_config(){
   Wire.beginTransmission(0x68);
   Wire.write(0x6B);
@@ -92,6 +114,23 @@ void mpu_config(){
   Wire.write(0x1C);
   Wire.write(0x10);
   Wire.endTransmission();
+}
+
+void config_all() {
+  mux_channel(PALM);
+  delay(10);
+  mpu_config();
+  delay(10);
+
+  mux_channel(FA);
+  delay(10);
+  mpu_config();
+  delay(10);
+
+  mux_channel(UA);
+  delay(10);
+  mpu_config();
+  delay(10);
 }
 
 void mux_channel(uint8_t channel){
@@ -118,20 +157,23 @@ void gyro_data(float *gX, float *gY, float *gZ){
 }
 
 void print_gyro(char * segment, float gX, float gY, float gZ){
-  Serial.print("Viteza unghiulara pe X pentru ");
+  Serial.print("== Viteza unghiulara pe X pentru ");
   Serial.print(segment);
   Serial.print(" este: ");
-  Serial.println(gX);
+  Serial.print(gX);
+  Serial.println(" ==");
 
-  Serial.print("Viteza unghiulara pe Y pentru ");
+  Serial.print("== Viteza unghiulara pe Y pentru ");
   Serial.print(segment);
   Serial.print(" este: ");
-  Serial.println(gY);
+  Serial.print(gY);
+  Serial.println(" ==");
 
-  Serial.print("Viteza unghiulara pe Z pentru ");
+  Serial.print("== Viteza unghiulara pe Z pentru ");
   Serial.print(segment);
   Serial.print(" este: ");
-  Serial.println(gZ);
+  Serial.print(gZ);
+  Serial.println(" ==");
 }
 
 void get_gyro_offsets(float *offX, float *offY, float *offZ){
@@ -173,26 +215,29 @@ void accel_data(float *aX, float *aY, float *aZ){
 }
 
 void print_accel(char *segment, float aX, float aY, float aZ){
-  Serial.print("Acceleratia pe X pentru ");
+  Serial.print("== Acceleratia pe X pentru ");
   Serial.print(segment);
   Serial.print(" este: ");
-  Serial.println(aX);
+  Serial.print(aX);
+  Serial.println(" ==");
 
-  Serial.print("Acceleratia pe Y pentru ");
+  Serial.print("== Acceleratia pe Y pentru ");
   Serial.print(segment);
   Serial.print(" este: ");
-  Serial.println(aY);
+  Serial.print(aY);
+  Serial.println(" ==");
 
-  Serial.print("Acceleratia pe Z pentru ");
+  Serial.print("== Acceleratia pe Z pentru ");
   Serial.print(segment);
   Serial.print(" este: ");
-  Serial.println(aZ);
+  Serial.print(aZ);
+  Serial.println(" ==");
 }
 
 void print_angles_quaternions(char *segment, float q0, float q1, float q2, float q3, float roll, float pitch, float yaw){
-  Serial.printf(" Quaternion (%s): [%.3f  %.3f  %.3f  %.3f]\n", segment, q0, q1, q2, q3);
+  Serial.printf("== Quaternion (%s): [%.3f  %.3f  %.3f  %.3f] ==\n", segment, q0, q1, q2, q3);
 
-  Serial.printf(" Euler R/P/Y (%s): [%.1f°,  %.1f°,  %.1f°]\n\n", segment, roll, pitch, yaw);
+  Serial.printf("== Euler R/P/Y (%s): [%.1f°,  %.1f°,  %.1f°] ==\n\n", segment, roll, pitch, yaw);
 }
 
 void get_flex_values(){
@@ -222,6 +267,7 @@ void save_flex_range(){
   prefs.putInt("little_min", little_min);
   prefs.putInt("little_max", little_max);
 
+  prefs.putBool("flexRoM", true);
   prefs.end();
 
   Serial.println("RoM of flex sensors saved.");
@@ -299,172 +345,32 @@ void load_neutral_pose(){
   Serial.println("Neutral reference loaded.");
 }
 
-void printNeutralPose() {
+void print_neutral_pose() {
   Serial.println(F("=== Neutral Pose Reference ==="));
   
-  Serial.printf("Palm Neutral Q: [%.3f, %.3f, %.3f, %.3f]\n",
+  Serial.printf("== Palm Neutral Q: [%.3f, %.3f, %.3f, %.3f] ==\n",
                 q0_palm_neutral,
                 q1_palm_neutral,
                 q2_palm_neutral,
                 q3_palm_neutral);
 
-  Serial.printf("Forearm (FA) Neutral Q: [%.3f, %.3f, %.3f, %.3f]\n",
+  Serial.printf("== Forearm (FA) Neutral Q: [%.3f, %.3f, %.3f, %.3f] ==\n",
                 q0_fa_neutral,
                 q1_fa_neutral,
                 q2_fa_neutral,
                 q3_fa_neutral);
 
-  Serial.printf("Upper-arm (UA) Neutral Q: [%.3f, %.3f, %.3f, %.3f]\n",
+  Serial.printf("== Upper-arm (UA) Neutral Q: [%.3f, %.3f, %.3f, %.3f] ==\n",
                 q0_ua_neutral,
                 q1_ua_neutral,
                 q2_ua_neutral,
                 q3_ua_neutral);
-  
-  Serial.println(F("============================="));
 }
 
+void capture_neutral_pose(){
+    Serial.println("Obtinere date de referinta pt pozitie neutra");
 
-void setup() {
-  // put your setup code here, to run once:
-
-  Serial.begin(115200);
-
-  pinMode(RED, OUTPUT);
-  pinMode(GREEN, OUTPUT);
-  pinMode(BLUE, OUTPUT);
-
-  Wire.setClock(400000);
-  Wire.begin();
-  delay(250);
-
-  prefs.begin("gyroCal", true);
-  bool isCalibrated = prefs.getBool("calibrated", false);
-  prefs.end();
-  if(!isCalibrated){
-    led_color(255, 0, 255);
-
-    Serial.println("Senzori necalibrati...");
-    Serial.println("Calibrare...");
-
-    Serial.println("Lasati senzorii nemiscati timp de 5s");
-    delay(5000);
-
-    mux_channel(PALM);
-    delay(10);
-    mpu_config();
-    delay(10);
-    get_gyro_offsets(&offX_palm, &offY_palm, &offZ_palm);
-
-    Serial.println("== Calibrare senzor antebrat ==");
-    mux_channel(FA);
-    delay(10);
-    mpu_config();
-    delay(10);
-    get_gyro_offsets(&offX_fa, &offY_fa, &offZ_fa);
-
-    Serial.println("== Calibrare senzor brat ==");
-    mux_channel(UA);
-    delay(10);
-    mpu_config();
-    delay(10);
-    get_gyro_offsets(&offX_ua, &offY_ua, &offZ_ua);
-
-    Serial.println("== Calibrare completa. Salvare in flash... ==");
-
-    prefs.begin("gyroCal", false);
-    prefs.putFloat("pX", offX_palm);
-    prefs.putFloat("pY", offY_palm);
-    prefs.putFloat("pZ", offZ_palm);
-
-    prefs.putFloat("fX", offX_fa);
-    prefs.putFloat("fY", offY_fa);
-    prefs.putFloat("fZ", offZ_fa);
-
-    prefs.putFloat("uX", offX_ua);
-    prefs.putFloat("uY", offY_ua);
-    prefs.putFloat("uZ", offZ_ua);
-
-    prefs.putBool("calibrated", true);
-    prefs.end();
-
-    Serial.println(">>> Date de calibrare salvate. Reporniti alimentarea <<<");
-    while(true){}
-  }
-
-  prefs.begin("flexRange", true);
-  bool flexRoM = prefs.getBool("flexRoM", false);
-  prefs.end();
-  if(!flexRoM){
-    Serial.println("Senzori de rezistenta necalibrati...");
-    Serial.println("Calibrare...");
-
-    int start = millis();
-
-    // TO DO - ADD  OUTPUT TO SIGNAL WHEN TO MOVE HAND
-    Serial.println("Miscati degetele pentru RoM a senzorilor de rezistenta");
-    led_color(255, 0, 255);
-
-    while(millis() - start < FLEX_REFERENCE_TIME){
-      get_flex_values();
-    }
-
-    save_flex_range();
-    prefs.begin("flexRange", false);
-    prefs.putBool("flexRoM", true);
-    prefs.end();
-    
-    Serial.println(">>> RoM senzori de rezistenta salvat. Reporniti alimentarea <<<");
-
-    Serial.println("=== Flex Sensors Range of Motion ===");
-
-    Serial.print("Thumb Sensor RoM: Min = ");
-    Serial.print(thumb_min);
-    Serial.print(", Max = ");
-    Serial.println(thumb_max);
-
-    Serial.print("Index Sensor RoM: Min = ");
-    Serial.print(index_min);
-    Serial.print(", Max = ");
-    Serial.println(index_max);
-
-    Serial.print("Little Sensor RoM: Min = ");
-    Serial.print(little_min);
-    Serial.print(", Max = ");
-    Serial.println(little_max);
-
-    Serial.println("=====================================");
-
-    Serial.println(">>> Date de calibrare salvate. Reporniti alimentarea <<<");
-    while(true){};
-  }
-
-  prefs.begin("neutralPose", true);
-  bool neutral_pose = prefs.getBool("neutral_pose", false);
-  prefs.end();
-  if(!neutral_pose){
-    Serial.println("Referinta in pozitie neutra lipsa...");
-    Serial.println("Va rugam sa tineti mana in jos cu interiorul palmei \n inspre sold pe durata luminii intermitente mov,\n dupa incheierea luminii intermitente portocalii...");
-
-    {
-      int flip = 0;
-      int flip_timer = millis();
-      int start = millis();
-
-      //wait - blink orange
-      //let user prepare neutral hand pose
-      while(millis() - start < WAIT) {
-        if(flip % 2 == 0) {
-          led_color(255, 165, 0); 
-        } else {
-          led_color(0, 0, 0);
-        }
-
-        if(millis() - flip_timer >= 300){
-          flip++;
-          flip_timer = millis();
-        }
-      }
-    }
+    led_wait();
 
     int start = millis();
     int samples = 0;
@@ -472,7 +378,8 @@ void setup() {
     float sumFw = 0, sumFx = 0, sumFy = 0, sumFz = 0;
     float sumUw = 0, sumUx = 0, sumUy = 0, sumUz = 0;
 
-    led_color(255, 0, 255);
+    led_hold();
+
     while(millis() - start < NEUTRAL_REFERENCE_TIME){
       mux_channel(PALM);
       gyro_data(&gX_palm, &gY_palm, &gZ_palm);
@@ -522,60 +429,180 @@ void setup() {
     q3_ua_neutral = sumUz / samples;
 
     save_neutral_pose();
+}
 
-    print_neutral_pose();
+void calibrate_flex_rom(){
+    Serial.println("Calibrare flex RoM");
+    led_wait();
 
-    Serial.println(">>> Date de calibrare salvate. Reporniti alimentarea <<<");
+    int start = millis();
+
+    led_hold();
+    Serial.println("Miscati degetele pentru RoM a senzorilor de rezistenta");
+    led_hold();
+
+    while(millis() - start < FLEX_REFERENCE_TIME){
+      get_flex_values();
+    }
+
+    save_flex_range();
+}
+
+void print_flex_rom(){
+    Serial.println("== RoM senzori de rezistenta salvat ==");
+
+    Serial.print("== Thumb Sensor RoM: Min = ");
+    Serial.print(thumb_min);
+    Serial.print(", Max = ");
+    Serial.print(thumb_max);
+    Serial.println(" ==");
+
+    Serial.print("== Index Sensor RoM: Min = ");
+    Serial.print(index_min);
+    Serial.print(", Max = ");
+    Serial.print(index_max);
+    Serial.println(" ==");
+
+    Serial.print("== Little Sensor RoM: Min = ");
+    Serial.print(little_min);
+    Serial.print(", Max = ");
+    Serial.print(little_max);
+    Serial.println(" ==");
+
+    Serial.println("== Reporniti alimentarea ==");
+}
+
+void save_gyro_offsets(){
+  prefs.begin("gyroCal", false);
+  prefs.putFloat("pX", offX_palm);
+  prefs.putFloat("pY", offY_palm);
+  prefs.putFloat("pZ", offZ_palm);
+
+  prefs.putFloat("fX", offX_fa);
+  prefs.putFloat("fY", offY_fa);
+  prefs.putFloat("fZ", offZ_fa);
+
+  prefs.putFloat("uX", offX_ua);
+  prefs.putFloat("uY", offY_ua);
+  prefs.putFloat("uZ", offZ_ua);
+
+  prefs.putBool("calibrated", true);
+  prefs.end();
+}
+
+void capture_gyro_offsets(){
+    Serial.println("== Calibrare flex RoM ==");
+
+    led_wait();
+    led_hold();
+
+    Serial.println("== Calibrare senzor palma ==");
+    mux_channel(PALM);
+    delay(10);
+    mpu_config();
+    delay(10);
+    get_gyro_offsets(&offX_palm, &offY_palm, &offZ_palm);
+
+    Serial.println("== Calibrare senzor antebrat ==");
+    mux_channel(FA);
+    delay(10);
+    mpu_config();
+    delay(10);
+    get_gyro_offsets(&offX_fa, &offY_fa, &offZ_fa);
+
+    Serial.println("== Calibrare senzor brat ==");
+    mux_channel(UA);
+    delay(10);
+    mpu_config();
+    delay(10);
+    get_gyro_offsets(&offX_ua, &offY_ua, &offZ_ua);
+
+    save_gyro_offsets();
+}
+
+void print_offset(char *segment, float oX, float oY, float oZ){
+  Serial.print("== Offset pe X pentru ");
+  Serial.print(segment);
+  Serial.print(" este: ");
+  Serial.print(oX);
+  Serial.println(" ==");
+
+  Serial.print("== Offset pe Y pentru ");
+  Serial.print(segment);
+  Serial.print(" este: ");
+  Serial.print(oY);
+  Serial.println(" ==");
+
+  Serial.print("== Offset pe Z pentru ");
+  Serial.print(segment);
+  Serial.print(" este: ");
+  Serial.print(oZ);
+  Serial.println(" ==");
+}
+
+void print_gyro_offsets(){
+  print_offset("palma", offX_palm, offY_palm, offZ_palm);
+  print_offset("antebrat", offX_fa, offY_fa, offZ_fa);
+  print_offset("brat", offX_ua, offY_ua, offZ_ua);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+
+  Serial.begin(115200);
+
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(BLUE, OUTPUT);
+
+  Wire.setClock(400000);
+  Wire.begin();
+  delay(250);
+
+  prefs.begin("gyroCal", true);
+  bool isCalibrated = prefs.getBool("calibrated", false);
+  prefs.end();
+  if(!isCalibrated){
+    capture_gyro_offsets();
+    print_gyro_offsets();
+    while(true){}
+  }
+
+  // ===== FLEX SENSORS ROM CAPTURE =====
+  prefs.begin("flexRange", true);
+  bool flexRoM = prefs.getBool("flexRoM", false);
+  prefs.end();
+  if(!flexRoM){
+    calibrate_flex_rom();
+    print_flex_rom();
     while(true){};
   }
 
-  /*
-  >>>>>>>>> TO DO <<<<<<<<<
-  --------> CALIBRATION PHASE AND RoM CAPTURE FOR NEUTRAL HAND POSE (HAND HANGING DOWN PARALLEL TO BODY)
-  --------> CALIBRATION PHASE AND RoM CAPTURE FOR PALM EXTENSION/FLEXION/SUPINATION/PRONATION (MIN ROLL/MAX ROLL/MIN PITCH/MAX PITCH/QUATERNION IN CRT FRAME/QUATERNION IN NEUTRAL FRAME)
-  */
+  // ===== NEUTRAL POSE REFERENCEE CAPTURE =====
+  prefs.begin("neutralPose", true);
+  bool neutral_pose = prefs.getBool("neutral_pose", false);
+  prefs.end();
+  if(!neutral_pose){
+    capture_neutral_pose();
+    print_neutral_pose();
+    while(true){};
+  }
 
-  mux_channel(PALM);
-  delay(10);
-  mpu_config();
-  delay(10);
-
-  mux_channel(FA);
-  delay(10);
-  mpu_config();
-  delay(10);
-
-  mux_channel(UA);
-  delay(10);
-  mpu_config();
-  delay(10);
+  // ===== CONFIGURE IMU SENSORS =====
+  config_all();
 
   Serial.println("== Calibrare... ==");
 
-  prefs.begin("gyroCal",true);
-  offX_palm = prefs.getFloat("pX", 0.0f);
-  offY_palm = prefs.getFloat("pY", 0.0f);
-  offZ_palm = prefs.getFloat("pZ", 0.0f);
-
-  offX_fa   = prefs.getFloat("fX", 0.0f);
-  offY_fa   = prefs.getFloat("fY", 0.0f);
-  offZ_fa   = prefs.getFloat("fZ", 0.0f);
-
-  offX_ua   = prefs.getFloat("uX", 0.0f);
-  offY_ua   = prefs.getFloat("uY", 0.0f);
-  offZ_ua   = prefs.getFloat("uZ", 0.0f);
-  prefs.end();
-
+  // ===== LOAD REFERENCE DATA FROM FLASH =====
+  load_gyro_offsets();
   load_flex_range();
-
   load_neutral_pose();
-
   Serial.println(">>> Senzori calibrati & referinte incarcate <<<");
 
+  // ===== INITIALIZAREA FILTRE MADGWICK =====
   filter_palm.begin(SAMPLE_FREQ);
   filter_fa.begin(SAMPLE_FREQ);
   filter_ua.begin(SAMPLE_FREQ);
-  
 }
 
 void loop() {
@@ -637,5 +664,4 @@ void loop() {
 
     last_print = millis();  
   }
-  //delay(500);
 }
