@@ -244,8 +244,22 @@ void load_flex_range(){
   Serial.println("RoM of flex sensors loaded.");
 }
 
-void load_gyro_offsets(){
+void load_gyro_offsets() {
+  prefs.begin("gyroCal", true);
 
+  offX_palm = prefs.getFloat("pX", 0.0f);
+  offY_palm = prefs.getFloat("pY", 0.0f);
+  offZ_palm = prefs.getFloat("pZ", 0.0f);
+
+  offX_fa   = prefs.getFloat("fX", 0.0f);
+  offY_fa   = prefs.getFloat("fY", 0.0f);
+  offZ_fa   = prefs.getFloat("fZ", 0.0f);
+
+  offX_ua   = prefs.getFloat("uX", 0.0f);
+  offY_ua   = prefs.getFloat("uY", 0.0f);
+  offZ_ua   = prefs.getFloat("uZ", 0.0f);
+
+  prefs.end();
 }
 
 void save_neutral_pose(){
@@ -284,6 +298,31 @@ void load_neutral_pose(){
 
   Serial.println("Neutral reference loaded.");
 }
+
+void printNeutralPose() {
+  Serial.println(F("=== Neutral Pose Reference ==="));
+  
+  Serial.printf("Palm Neutral Q: [%.3f, %.3f, %.3f, %.3f]\n",
+                q0_palm_neutral,
+                q1_palm_neutral,
+                q2_palm_neutral,
+                q3_palm_neutral);
+
+  Serial.printf("Forearm (FA) Neutral Q: [%.3f, %.3f, %.3f, %.3f]\n",
+                q0_fa_neutral,
+                q1_fa_neutral,
+                q2_fa_neutral,
+                q3_fa_neutral);
+
+  Serial.printf("Upper-arm (UA) Neutral Q: [%.3f, %.3f, %.3f, %.3f]\n",
+                q0_ua_neutral,
+                q1_ua_neutral,
+                q2_ua_neutral,
+                q3_ua_neutral);
+  
+  Serial.println(F("============================="));
+}
+
 
 void setup() {
   // put your setup code here, to run once:
@@ -395,6 +434,7 @@ void setup() {
 
     Serial.println("=====================================");
 
+    Serial.println(">>> Date de calibrare salvate. Reporniti alimentarea <<<");
     while(true){};
   }
 
@@ -426,7 +466,7 @@ void setup() {
       }
     }
 
-    start = millis();
+    int start = millis();
     int samples = 0;
     float sumPw = 0, sumPx = 0, sumPy = 0, sumPz = 0;
     float sumFw = 0, sumFx = 0, sumFy = 0, sumFz = 0;
@@ -482,6 +522,11 @@ void setup() {
     q3_ua_neutral = sumUz / samples;
 
     save_neutral_pose();
+
+    print_neutral_pose();
+
+    Serial.println(">>> Date de calibrare salvate. Reporniti alimentarea <<<");
+    while(true){};
   }
 
   /*
@@ -525,7 +570,7 @@ void setup() {
 
   load_neutral_pose();
 
-  Serial.println(">>> Senzori calibrati <<<");
+  Serial.println(">>> Senzori calibrati & referinte incarcate <<<");
 
   filter_palm.begin(SAMPLE_FREQ);
   filter_fa.begin(SAMPLE_FREQ);
