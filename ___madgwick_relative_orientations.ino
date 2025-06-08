@@ -1,12 +1,3 @@
-/*
-        TO DO 
-      
-        * CALIBRATE GYROSCOPES
-        * GATHER FLEX SENSORS RANGE
-        * GATHER NEUTRAL OF MPU'S
-        * GATHER RoM OF PALM -> MIN/MAX PITCH/ROLL AND QUATERNIONS
-*/
-
 #include <Wire.h>
 #include <Preferences.h>
 #include <MadgwickAHRS.h>
@@ -22,6 +13,7 @@
 #define WAIT 3000
 #define FLEX_REFERENCE_TIME 10000
 #define NEUTRAL_REFERENCE_TIME 10000
+#define PALM_ROM_REFERENCE_TIME 10000
 
 #define CAL_SAMPLES 150
 
@@ -37,6 +29,14 @@ Preferences prefs;
 int thumb_min = 4095, thumb_max = 0;
 int index_min = 4095, index_max = 0;
 int little_min = 4095, little_max = 0;
+
+float pitch_min = 10000, pitch_max = -10000;
+float pQ0_pitch_min, pQ1_pitch_min, pQ2_pitch_min, pQ3_pitch_min; 
+float pQ0_pitch_max, pQ1_pitch_max, pQ2_pitch_max, pQ3_pitch_max; 
+
+float roll_min = 10000, roll_max = -10000;
+float pQ0_roll_min, pQ1_roll_min, pQ2_roll_min, pQ3_roll_min; 
+float pQ0_roll_max, pQ1_roll_max, pQ2_roll_max, pQ3_roll_max; 
 
 float q0_palm_neutral, q1_palm_neutral, q2_palm_neutral, q3_palm_neutral;
 float q0_fa_neutral, q1_fa_neutral, q2_fa_neutral, q3_fa_neutral;
@@ -546,6 +546,123 @@ void print_gyro_offsets(){
   print_offset("brat", offX_ua, offY_ua, offZ_ua);
 }
 
+void capture_palm_pitch_ref(){
+  Serial.println("== Capture Palm Pitch Reference ==");
+  led_wait();
+  led_hold();
+
+  long start = millis();
+
+  while( millis() - start < PALM_ROM_REFERENCE_TIME){
+    mux_channel(PALM); //PALM_ROM_REFERENCE_TIME
+    gyro_data(&gX_palm, &gY_palm, &gZ_palm);
+    accel_data(&aX_palm, &aY_palm, &aZ_palm);
+
+    filter_palm.updateIMU(gX_palm,gY_palm,gZ_palm,aX_palm,aY_palm,aZ_palm);
+    float pitch = filter_palm.getPitch();
+    float q0 = filter_palm.getQuaternion0();
+    float q1 = filter_palm.getQuaternion1();
+    float q2 = filter_palm.getQuaternion2();
+    float q3 = filter_palm.getQuaternion3();
+
+    if (pitch < pitch_min) {
+      pitch_min = pitch;
+      pQ0_pitch_min = q0; 
+      pQ1_pitch_min = q1;
+      pQ2_pitch_min = q2;
+      pQ3_pitch_min = q3;
+    }
+    if (pitch > pitch_max) {
+      pitch_max = pitch;
+      pQ0_pitch_max = q0; 
+      pQ1_pitch_max = q1; 
+      pQ2_pitch_max = q2; 
+      pQ3_pitch_max = q3; 
+    }
+
+    delay(INTERVAL);
+  } 
+
+  Serial.printf("== Pitch  min: %.1f° → Q[%.3f,%.3f,%.3f,%.3f] ==\n",
+                pitch_min,
+                pQ0_pitch_min,pQ1_pitch_min,pQ2_pitch_min,pQ3_pitch_min);
+  Serial.printf("== Pitch  max: %.1f° → Q[%.3f,%.3f,%.3f,%.3f] ==\n",
+                pitch_max,
+                pQ0_pitch_max, pQ1_pitch_max, pQ2_pitch_max, pQ3_pitch_max);
+
+  prefs.begin("palmPitchRef", false);
+  prefs.putFloat("minPitch", pitch_min);
+  prefs.putFloat("pQ0min", pQ0_pitch_min);
+  prefs.putFloat("pQ1min", pQ1_pitch_min);
+  prefs.putFloat("pQ2min", pQ2_pitch_min);
+  prefs.putFloat("pQ3min", pQ3_pitch_min);
+  prefs.putFloat("maxPitch", pitch_max);
+  prefs.putFloat("pQ0max", pQ0_pitch_max);
+  prefs.putFloat("pQ1max", pQ1_pitch_max);
+  prefs.putFloat("pQ2max", pQ2_pitch_max);
+  prefs.putFloat("pQ3max", pQ3_pitch_max);
+  prefs.putBool ("captured", true);
+  prefs.end();
+}
+
+void capture_palm_roll_ref(){
+  Serial.println("== Capture Palm Roll Reference ==");
+  led_wait();
+  led_hold();
+
+  long start = millis();
+
+  while(millis() - start < PALM_ROM_REFERENCE_TIME){
+    mux_channel(PALM);
+    gyro_data(&gX_palm,&gY_palm,&gZ_palm);
+    accel_data(&aX_palm,&aY_palm,&aZ_palm);
+
+    filter_palm.updateIMU(gX_palm,gY_palm,gZ_palm,aX_palm,aY_palm,aZ_palm);
+    float roll = filter_palm.getRoll();
+    float q0 = filter_palm.getQuaternion0();
+    float q1 = filter_palm.getQuaternion1();
+    float q2 = filter_palm.getQuaternion2();
+    float q3 = filter_palm.getQuaternion3();
+
+    if (roll < roll_min) {
+      roll_min = roll;
+      pQ0_roll_min = q0; 
+      pQ1_roll_min = q1;
+      pQ2_roll_min = q2;
+      pQ3_roll_min = q3;
+    }
+    if (roll > roll_max) {
+      roll_max = roll;
+      pQ0_roll_max = q0;
+      pQ1_roll_max = q1;
+      pQ2_roll_max = q2;
+      pQ3_roll_max = q3;
+    }
+    delay(INTERVAL);
+  }
+
+   Serial.printf("Roll   min: %.1f° → Q[%.3f,%.3f,%.3f,%.3f]\n",
+                roll_min,
+                pQ0_roll_min,pQ1_roll_min,pQ2_roll_min,pQ3_roll_min);
+  Serial.printf("Roll   max: %.1f° → Q[%.3f,%.3f,%.3f,%.3f]\n",
+                roll_max,
+                pQ0_roll_max,pQ1_roll_max,pQ2_roll_max,pQ3_roll_max);
+
+                prefs.begin("palmRollRef", false);
+  prefs.putFloat("minRoll", roll_min);
+  prefs.putFloat("pQ0min", pQ0_roll_min);
+  prefs.putFloat("pQ1min", pQ1_roll_min);
+  prefs.putFloat("pQ2min", pQ2_roll_min);
+  prefs.putFloat("pQ3min", pQ3_roll_min);
+  prefs.putFloat("maxRoll", roll_max);
+  prefs.putFloat("pQ0max", pQ0_roll_max);
+  prefs.putFloat("pQ1max", pQ1_roll_max);
+  prefs.putFloat("pQ2max", pQ2_roll_max);
+  prefs.putFloat("pQ3max", pQ3_roll_max);
+  prefs.putBool ("captured", true);
+  prefs.end();
+}
+
 void setup() {
   // put your setup code here, to run once:
 
@@ -587,6 +704,22 @@ void setup() {
     print_neutral_pose();
     while(true){};
   }
+
+  // ===== PALM MIN/MAX ROLL/PITCH + QUATERNIONS
+  prefs.begin("palmPitchRef", true);
+  if (!prefs.getBool("captured", false)) {
+    capture_palm_pitch_ref();
+    while(true){};
+  }
+  prefs.end();
+
+  // palm roll
+  prefs.begin("palmRollRef", true);
+  if (!prefs.getBool("captured", false)) {
+    capture_palm_roll_ref();
+    while(true){};
+  }
+  prefs.end();
 
   // ===== CONFIGURE IMU SENSORS =====
   config_all();
