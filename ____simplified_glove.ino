@@ -510,13 +510,13 @@ void determine_gesture(){
 
   if (!pitch_neutral_zone && roll_neutral_zone){
     if(pitch_palm > pitch_hi_dead){
-      Serial.println("FLEXION");
+      Serial.println("EXTENSION");
       led_color(255,0,0);
       palm_r = 255;
       palm_g = 0;
       palm_b = 0;
     } else {
-      Serial.println("EXTENSION");
+      Serial.println("FLEXION");
       led_color(0,0,255);
       palm_r = 0;
       palm_g = 0;
@@ -524,13 +524,13 @@ void determine_gesture(){
     }
   } else if (!roll_neutral_zone && pitch_neutral_zone){
     if(roll_palm > roll_hi_dead){
-      Serial.println("PRONATION");
+      Serial.println("SUPINATION");
       led_color(0,255,0);
       palm_r = 0;
       palm_g = 255;
       palm_b = 0;
     } else {
-      Serial.println("SUPINATION");
+      Serial.println("PRONATION");
       led_color(255,0,255);
       palm_r = 255;
       palm_g = 0;
