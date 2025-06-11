@@ -34,6 +34,7 @@
 
     String gesture_name = "DEFAULT_GESTURE";
     String pause_gesture = "";
+    String speed_status = "";
 
     bool exiting_pause = false;
 
@@ -60,7 +61,8 @@
       MODE_NORMAL,
       MODE_HOVER, 
       MODE_PAUSE,
-      MODE_LAND
+      MODE_LAND,
+      MODE_TAKEOFF
     };
 
     MODE crt_mode = MODE_NORMAL;
@@ -85,6 +87,9 @@
 
     int index_threshold = 2048;
     int little_threshold = 2048;
+
+    float slow_threshold = 0.0f;
+    float medium_threshold = 0.0f;
 
     int palm_r = 255, palm_g = 255, palm_b = 255;
 
@@ -316,6 +321,10 @@
       little_min = prefs.getInt("little_min", 4095);
       little_max = prefs.getInt("little_max", 0);
       prefs.end();
+
+      //compute sensor threshold for speed control
+      slow_threshold = 0.34f * thumb_max;
+      medium_threshold = slow_threshold + 0.33f * thumb_max;
     }
 
     void load_gyro_offsets() {
@@ -694,6 +703,14 @@
     }
   }
 
+//get speed based on thumb extension
+int get_speed(){
+  float speed = analogRead(THUMB);
+  if(speed <= slow_threshold) return 1;
+  else if (speed <= medium_threshold) return 2;
+  else return 3;
+}
+
 //count clicks per finger
   int indexClickNo() {
     unsigned long now = millis();
@@ -875,43 +892,68 @@
     int idxClick = indexClickNo(); // 0/1/2
     int litClick = littleClickNo(); // 0/2
 
-    processClicks(idxClick, litClick);  
+    processClicks(idxClick, litClick); 
+     
+    //[land, takeoff, speed, hover, fwd, back, left, right]
+    int  cmd[8] = {0};
 
-    //[land, takeoff, hover, fwd, back, left, right]
-    bool cmd[7] = {0};
+    cmd[2] = get_speed();
+    if(crt_mode == MODE_HOVER) cmd[2] = 3;
+    switch (cmd[2]) {
+      case 0:
+        speed_status = "SLOW";
+        break;
+      case 1:
+        speed_status = "MEDIUM";
+        break;
+      case 2:
+        speed_status = "FAST";
+        break;
+      default:
+        break;
+    }
 
     switch (crt_mode) {
     case MODE_PAUSE:
-      if (pause_gesture == "FLEXION")    cmd[3] = true;
-      else if (pause_gesture == "EXTENSION") cmd[4] = true;
-      else if (pause_gesture == "PRONATION") cmd[5] = true;
-      else if (pause_gesture == "SUPINATION") cmd[6] = true;
+      if (pause_gesture == "FLEXION")    cmd[4] = 1;
+      else if (pause_gesture == "EXTENSION") cmd[5] = 1;
+      else if (pause_gesture == "PRONATION") cmd[6] = 1;
+      else if (pause_gesture == "SUPINATION") cmd[7] = 1;
       Serial.print("PAUSE - ");
-      Serial.println(pause_gesture);
+      Serial.print(pause_gesture);
+      Serial.print(" - ");
+      Serial.println(speed_status);
       break;
 
     case MODE_HOVER:
-      cmd[2] = true;
+      cmd[3] = 1;
       Serial.println("HOVER");
       break;
 
     case MODE_LAND:
-      cmd[0] = true;
+      cmd[0] = 1;
+      Serial.println("LAND");
+      break;
+
+    case MODE_TAKEOFF:
+      cmd[1] = 1;
       Serial.println("LAND");
       break;
 
     case MODE_NORMAL:
     default:
-      if (gesture_name == "FLEXION")    cmd[3] = true;
-      else if (gesture_name == "EXTENSION") cmd[4] = true;
-      else if (gesture_name == "PRONATION") cmd[5] = true;
-      else if (gesture_name == "SUPINATION") cmd[6] = true;
-      Serial.println(gesture_name);
+      if (gesture_name == "FLEXION")    cmd[4] = 1;
+      else if (gesture_name == "EXTENSION") cmd[5] = 1;
+      else if (gesture_name == "PRONATION") cmd[6] = 1;
+      else if (gesture_name == "SUPINATION") cmd[7] = 1;
+      Serial.print(gesture_name);
+      Serial.print(" - ");
+      Serial.println(speed_status);
       break;
     }
       
     Serial.print("[");
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
       Serial.print(cmd[i] ? "1" : "0");
       if (i < 6) Serial.print(";");
     }
