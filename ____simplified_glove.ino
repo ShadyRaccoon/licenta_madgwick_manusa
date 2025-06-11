@@ -602,22 +602,21 @@
     unsigned long now = millis();
 
     // LAND has top priority
-    if (litClick == 2) {
+    if (litClick == 2 && crt_mode != MODE_LAND) {
       crt_mode = MODE_LAND;
-      blink_on = false; blink_last_toggle = now;
+      blink_on = false; 
+      blink_last_toggle = now;
       lit_cooldown_until = now + COOLDOWN_MS;
       lit_require_release = true;
       return;
     }
 
     // HOVER toggle (single index-click)
-    if (idxClick == 1) {
-      if (crt_mode == MODE_HOVER) {
-        // exit hover → back to NORMAL (live gesture)
-        crt_mode = MODE_NORMAL;
-      } else {
-        crt_mode = MODE_HOVER;
-      }
+    if (idxClick == 1 && 
+      (crt_mode == MODE_HOVER || crt_mode == MODE_NORMAL && crt_mode != MODE_LAND) &&
+      !exiting_pause
+    ) {
+      crt_mode = (crt_mode == MODE_HOVER ? MODE_NORMAL : MODE_HOVER);  
       blink_on = false;
       blink_last_toggle = now;
       idx_cooldown_until = now + COOLDOWN_MS;
@@ -626,7 +625,7 @@
     }
 
     // PAUSE toggle (double index-click)
-    if (idxClick == 2) {
+    if (idxClick == 2 && crt_mode != MODE_LAND) {
       if (crt_mode != MODE_PAUSE) {
       // entering pause
       crt_mode = MODE_PAUSE;
@@ -695,6 +694,7 @@
     }
   }
 
+//count clicks per finger
   int indexClickNo() {
     unsigned long now = millis();
 
