@@ -539,7 +539,7 @@
       bool pitch_neutral_zone = (pitch_palm >= pitch_lo_dead) && (pitch_palm <= pitch_hi_dead);
       bool roll_neutral_zone = (roll_palm >= roll_lo_dead) && (roll_palm <= roll_hi_dead);
 
-      if (!pitch_neutral_zone && roll_neutral_zone){
+      if (!pitch_neutral_zone && roll_neutral_zone && drone_status == "AIRBOURNE"){
         if(pitch_palm > pitch_hi_dead){
           //Serial.println("EXTENSION");
           gesture_name = "EXTENSION";
@@ -609,7 +609,7 @@
       if (drone_status == "GROUNDED") {
         // launch
         crt_mode = MODE_TAKEOFF;
-        drone_status = "AIRBORNE";
+        drone_status = "AIRBOURNE";
       } else {
         // land
         crt_mode = MODE_LAND;
@@ -624,7 +624,7 @@
     }
 
     // PAUSE toggle (double index-click)
-    if (idxClick == 2 && crt_mode != MODE_LAND) {
+    if (idxClick == 2 && drone_status == "AIRBOURNE") {
       if (crt_mode != MODE_PAUSE) {
       // entering pause
       crt_mode = MODE_PAUSE;
@@ -864,12 +864,12 @@ int get_speed(){
     int litClick = littleClickNo(); // 0/2
 
     processClicks(idxClick, litClick); 
-    Serial.print("Drone is now: ");
-    Serial.println(drone_status);
+    
     //[land, takeoff, speed, fwd, back, left, right]
-    int  cmd[7] = {0};
+    int  cmd[8] = {0};
 
     cmd[2] = get_speed();
+    cmd[3] = (drone_status == "AIRBOURNE") ? 1 : 0;
     switch (cmd[2]) {
       case 0:
         speed_status = "SLOW";
@@ -884,44 +884,49 @@ int get_speed(){
         break;
     }
 
-    switch (crt_mode) {
-    case MODE_PAUSE:
-      if (pause_gesture == "FLEXION")    cmd[4] = 1;
-      else if (pause_gesture == "EXTENSION") cmd[5] = 1;
-      else if (pause_gesture == "PRONATION") cmd[6] = 1;
-      else if (pause_gesture == "SUPINATION") cmd[7] = 1;
-      Serial.print("PAUSE - ");
-      Serial.print(pause_gesture);
-      Serial.print(" - ");
-      Serial.println(speed_status);
-      break;
-
-    case MODE_LAND:
-      cmd[0] = 1;
-      Serial.println("LAND");
-      break;
-
-    case MODE_TAKEOFF:
+    if (crt_mode == MODE_TAKEOFF) {
       cmd[1] = 1;
       Serial.println("TAKEOFF");
-      break;
+      crt_mode = MODE_NORMAL;      // clear it so you don’t repeat
+      drone_status = "AIRBOURNE";
+    } else if(crt_mode == MODE_LAND){
+      cmd[0] = 1;
+      Serial.println("LAND");
+      crt_mode = MODE_NORMAL; 
+      drone_status = "GROUNDED";  
+    } else if(drone_status == "AIRBOURNE"){
+      switch (crt_mode) {
+      case MODE_PAUSE:
+        if (pause_gesture == "FLEXION")    cmd[4] = 1;
+        else if (pause_gesture == "EXTENSION") cmd[5] = 1;
+        else if (pause_gesture == "PRONATION") cmd[6] = 1;
+        else if (pause_gesture == "SUPINATION") cmd[7] = 1;
+        Serial.print("PAUSE - ");
+        Serial.print(pause_gesture);
+        Serial.print(" - ");
+        Serial.println(speed_status);
+        break;
 
-    case MODE_NORMAL:
-    default:
-      if (gesture_name == "FLEXION")    cmd[4] = 1;
-      else if (gesture_name == "EXTENSION") cmd[5] = 1;
-      else if (gesture_name == "PRONATION") cmd[6] = 1;
-      else if (gesture_name == "SUPINATION") cmd[7] = 1;
-      Serial.print(gesture_name);
-      Serial.print(" - ");
-      Serial.println(speed_status);
-      break;
+      case MODE_NORMAL:
+      default:
+        if (gesture_name == "FLEXION")    cmd[4] = 1;
+        else if (gesture_name == "EXTENSION") cmd[5] = 1;
+        else if (gesture_name == "PRONATION") cmd[6] = 1;
+        else if (gesture_name == "SUPINATION") cmd[7] = 1;
+        Serial.print(gesture_name);
+        Serial.print(" - ");
+        Serial.println(speed_status);
+        break;
+      }
     }
-      
+
+    Serial.print("Drone is now: ");
+    Serial.println(drone_status);
+
     Serial.print("[");
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
       Serial.print(cmd[i] ? "1" : "0");
-      if (i < 6) Serial.print(";");
+      if (i < 7) Serial.print(";");
     }
     Serial.println("]");
 
