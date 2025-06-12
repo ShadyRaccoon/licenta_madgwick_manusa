@@ -24,19 +24,17 @@
 
     #define DEBOUNCE_DELAY      100
     #define DOUBLE_CLICK_WINDOW 2000
-    #define PAUSE_EXIT_HOVER    500
+
 
     //flex commands and led output state tracking
     #define COOLDOWN_MS 2000
 
     #define BLINK_INTERVAL       300   // 300 ms on/off
-    #define PAUSE_EXIT_DURATION  500   // 0.5 s hover after unpause
 
     String gesture_name = "DEFAULT_GESTURE";
     String pause_gesture = "";
     String speed_status = "";
-
-    bool exiting_pause = false;
+    String drone_status = "";
 
     long idx_last_press_time, idx_cooldown_until;
     bool idx_prev_pressed, idx_require_release;
@@ -51,15 +49,11 @@
       //led color at moment of pause
     int pause_r, pause_g, pause_b;
 
-    //cooldown to prevent single click after double click toggle
-    unsigned long pause_exit_deadline = 0;
-
     //flash handler object
     Preferences prefs;
 
     enum MODE{
       MODE_NORMAL,
-      MODE_HOVER, 
       MODE_PAUSE,
       MODE_LAND,
       MODE_TAKEOFF
@@ -610,26 +604,22 @@
   void processClicks(int idxClick, int litClick) {
     unsigned long now = millis();
 
-    // LAND has top priority
-    if (litClick == 2 && crt_mode != MODE_LAND) {
-      crt_mode = MODE_LAND;
-      blink_on = false; 
+    // LAND/TAKEOFF TOGGLE
+    if (litClick == 2) {
+      if (drone_status == "GROUNDED") {
+        // launch
+        crt_mode = MODE_TAKEOFF;
+        drone_status = "AIRBORNE";
+      } else {
+        // land
+        crt_mode = MODE_LAND;
+        drone_status = "GROUNDED";
+      }
+      // prepare blink
+      blink_on = false;
       blink_last_toggle = now;
       lit_cooldown_until = now + COOLDOWN_MS;
       lit_require_release = true;
-      return;
-    }
-
-    // HOVER toggle (single index-click)
-    if (idxClick == 1 && 
-      (crt_mode == MODE_HOVER || crt_mode == MODE_NORMAL && crt_mode != MODE_LAND) &&
-      !exiting_pause
-    ) {
-      crt_mode = (crt_mode == MODE_HOVER ? MODE_NORMAL : MODE_HOVER);  
-      blink_on = false;
-      blink_last_toggle = now;
-      idx_cooldown_until = now + COOLDOWN_MS;
-      idx_require_release = true;
       return;
     }
 
@@ -641,10 +631,7 @@
       pause_gesture = gesture_name;
       pause_r = palm_r; pause_g = palm_g; pause_b = palm_b;
       } else {
-        // exiting pause → go into hover for 0.5s
-        crt_mode = MODE_HOVER;
-        pause_exit_deadline = now + PAUSE_EXIT_HOVER;
-        exiting_pause = true;  
+        crt_mode = MODE_NORMAL;
       }
       blink_on = false;
       blink_last_toggle = now;
@@ -679,22 +666,6 @@
                 blink_on ? pause_b : 255);
         break;
 
-      case MODE_HOVER:
-        // did we just exit pause and are still in the hover‐timeout window?
-        if (millis() < pause_exit_deadline) {
-          toggleBlink();
-          // blink white ↔ current palm gesture
-          led_color(blink_on ? 255 : palm_r,
-                  blink_on ? 255 : palm_g,
-                  blink_on ? 255 : palm_b);
-        } else {
-          toggleBlink();
-          led_color(blink_on ? 255 : 0,
-                  blink_on ? 255 : 0,
-                  blink_on ? 255 : 0);
-        }
-        break;
-
       case MODE_NORMAL:
       default:
         // steady palm gesture color
@@ -714,9 +685,6 @@ int get_speed(){
 //count clicks per finger
   int indexClickNo() {
     unsigned long now = millis();
-
-    if (exiting_pause) return 0;
-    // 1) Cooldown: clear any pending & ignore
     if (now < idx_cooldown_until) {
       idx_prev_pressed   = false;
       idx_single_pending = 0;
@@ -868,6 +836,14 @@ int get_speed(){
     lit_require_release = true;
 
     crt_mode = MODE_NORMAL;
+
+    drone_status = "GROUNDED";
+    //to be switched from grounded to airbourne and reverse
+    //when toggling between land and takeoff
+    //when in grounded -> can only perform double click on little finger and that will result in a takeoff command
+    //after takeoff command drone_status changes to airbourne
+    //when in airbourne -> can perform all commands and little finger double click which will result in a land command
+    //after land command drone_status changes to grounded
   }
 
   void loop() {
@@ -884,21 +860,16 @@ int get_speed(){
       determine_gesture();
     }
 
-    if (exiting_pause && millis() >= pause_exit_deadline) {
-      crt_mode = MODE_NORMAL;
-      exiting_pause = false;
-    }
-
     int idxClick = indexClickNo(); // 0/1/2
     int litClick = littleClickNo(); // 0/2
 
     processClicks(idxClick, litClick); 
-     
-    //[land, takeoff, speed, hover, fwd, back, left, right]
-    int  cmd[8] = {0};
+    Serial.print("Drone is now: ");
+    Serial.println(drone_status);
+    //[land, takeoff, speed, fwd, back, left, right]
+    int  cmd[7] = {0};
 
     cmd[2] = get_speed();
-    if(crt_mode == MODE_HOVER) cmd[2] = 3;
     switch (cmd[2]) {
       case 0:
         speed_status = "SLOW";
@@ -925,11 +896,6 @@ int get_speed(){
       Serial.println(speed_status);
       break;
 
-    case MODE_HOVER:
-      cmd[3] = 1;
-      Serial.println("HOVER");
-      break;
-
     case MODE_LAND:
       cmd[0] = 1;
       Serial.println("LAND");
@@ -937,7 +903,7 @@ int get_speed(){
 
     case MODE_TAKEOFF:
       cmd[1] = 1;
-      Serial.println("LAND");
+      Serial.println("TAKEOFF");
       break;
 
     case MODE_NORMAL:
@@ -953,7 +919,7 @@ int get_speed(){
     }
       
     Serial.print("[");
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 7; i++) {
       Serial.print(cmd[i] ? "1" : "0");
       if (i < 6) Serial.print(";");
     }
