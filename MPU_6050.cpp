@@ -5,6 +5,7 @@ void selectMuxChannel(int channel) {
   Wire.beginTransmission(0x70);
   Wire.write(1 << channel);
   Wire.endTransmission();
+  delay(10);
 }
 
 void MPU_6050::config() {
@@ -20,6 +21,7 @@ void MPU_6050::config() {
 
 bool MPU_6050::readRaw() {
   totalAccelReadings++;
+  selectMux();
   Wire.beginTransmission(mpuAddr);
   Wire.write(0x3B);
   if (Wire.endTransmission(false) != 0 || Wire.requestFrom(mpuAddr, 14, true) != 14) {
@@ -52,6 +54,30 @@ void MPU_6050::readAccel() {
   bool isValid = (mag > 0.1f);
   if (!isValid) faultyAccelReadings++;
   smoothAccel(&ax_g, &ay_g, &az_g, isValid);
+}
+
+void MPU_6050::findROM(long time){
+  long start = millis();
+  while(millis() - start < time){
+    readAccel();
+    computeAngles();
+    if(roll > maxRoll) maxRoll = roll;
+    if(roll < minRoll) minRoll = roll;
+    if(pitch > maxPitch) maxPitch = pitch;
+    if(pitch < minPitch) minPitch = pitch; 
+    //delay(5);
+  }
+}
+
+void MPU_6050::setROM(float &minP, float &maxP, float &minR, float &maxR){
+  maxRoll = maxR;
+  minRoll = minR;
+  maxPitch = maxP;
+  minPitch = minP;
+}
+
+void MPU_6050::printROM(){
+  Serial.printf("[%s] -> MAX_ROLL: %.2f | MIN_ROLL: %.2f | MAX_PITCH: %.2f | MIN_PITCH: %.2f\n", name, maxRoll, minRoll, maxPitch, minPitch);
 }
 
 void MPU_6050::smoothAccel(float *ax_g, float *ay_g, float *az_g, bool isValid) {
@@ -88,18 +114,27 @@ void MPU_6050::readGyro() {
   gz_dps = gz / 65.5f - gyroOffsetZ;
 }
 
-void MPU_6050::computeAngles(float& roll, float& pitch) {
+void MPU_6050::computeAngles() {
   readAccel();
-  roll = atan2(ay_g, az_g) * 180.0f / PI;
-  pitch = atan2(-ax_g, sqrt(ay_g * ay_g + az_g * az_g)) * 180.0f / PI;
+  float rawRoll = atan2(ay_g, az_g) * 180.0f / PI;
+  float rawPitch = atan2(-ax_g, sqrt(ay_g * ay_g + az_g * az_g)) * 180.0f / PI;
+
+  const float alpha = 0.7f;  // Smoothing factor (0.8–0.95)
+
+  filteredRoll  = alpha * filteredRoll  + (1 - alpha) * rawRoll;
+  filteredPitch = alpha * filteredPitch + (1 - alpha) * rawPitch;
+
+  roll = filteredRoll;
+  pitch = filteredPitch;
 }
 
 void MPU_6050::computeGyroOffsets(int samples) {
+  if(samples == 0) return;
   long sumX = 0, sumY = 0, sumZ = 0;
   for (int i = 0; i < samples; i++) {
     readRaw();
     sumX += gx; sumY += gy; sumZ += gz;
-    delay(5);
+    //delay(10);
   }
   gyroOffsetX = (sumX / samples) / 65.5f;
   gyroOffsetY = (sumY / samples) / 65.5f;
@@ -107,25 +142,26 @@ void MPU_6050::computeGyroOffsets(int samples) {
 }
 
 void MPU_6050::computeNeutralAngles(int samples) {
-  float rollSum = 0, pitchSum = 0, r, p;
+  float rollSum = 0, pitchSum = 0;
+  if(samples == 0) return;
   for (int i = 0; i < samples; i++) {
-    computeAngles(r, p);
-    rollSum += r;
-    pitchSum += p;
-    delay(5);
+    computeAngles();
+    rollSum += roll;
+    pitchSum += pitch;
+    //delay(5);
   }
   neutralRoll = rollSum / samples;
   neutralPitch = pitchSum / samples;
 }
 
-void MPU_6050::findMaxAccel(int time) {
+void MPU_6050::findMaxAccel(long time) {
   maxAccelMag = 0;
   long start = millis();
   while(millis() - start < time){
     readAccel();
     float mag = sqrt(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
     if (mag > maxAccelMag) maxAccelMag = mag;
-    delay(5);
+    //delay(5);
   }
   accelThreshold = maxAccelMag * 0.85f;
 }
@@ -175,3 +211,142 @@ int MPU_6050::checkClick() {
   return clickDetected;
 }
 
+int MPU_6050::checkClickRelative(MPU_6050 &ref){
+  readAccel();
+  ref.readAccel();
+
+  float magThis = sqrt(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+  float magRef = sqrt(ref.ax_g * ref.ax_g + ref.ay_g * ref.ay_g + ref.az_g * ref.az_g);
+
+  float relMag = abs(magThis - magRef);
+
+  unsigned long now = millis();
+  int clickDetected = 0;
+
+  if (relMag > refAccelThreshold && !prevAccelAboveThreshold) {
+    if (now - lastAccelSpikeTime < doubleClickTimeout) {
+      clickDetected = 2;  // double click
+      singleClickPending = false;
+    } else {
+      singleClickPending = true;
+    }
+    lastAccelSpikeTime = now;
+    prevAccelAboveThreshold = true;
+  } else if (relMag <= refAccelThreshold) {
+    prevAccelAboveThreshold = false;
+  }
+
+  if (singleClickPending && now - lastAccelSpikeTime > doubleClickTimeout) {
+    clickDetected = 1;  // single click (optional to ignore)
+    singleClickPending = false;
+  }
+
+  return clickDetected;
+}
+
+void MPU_6050::printDebug() {
+  Serial.printf("Roll: %.2f, Pitch: %.2f, Gyro Y: %.2f, Gyro X: %.2f\n", 
+                roll, pitch,gy_dps, gx_dps);
+  Serial.printf("Total: %lu | Faulty: %lu (%.2f%%) | Failed: %lu (%.2f%%)\n",
+                getTotalAccelReadings(),
+                getFaultyAccelReadings(), getFaultyAccelPercent(),
+                getFailedAccelReadings(), getFailedAccelPercent());
+}
+
+void MPU_6050::initSensor(int gyroSamples, int neutralSamples, long accelTime, long romTime){
+  selectMux();
+  config();
+  Serial.printf("[%s] CALIBRARE GIROSCOP...\n", name);
+  delay(  1000);
+  computeGyroOffsets(gyroSamples);
+  Serial.printf("[%s] GIROSCOP CALIBRAT.\n", name);
+  Serial.printf("[%s] DETERMINARE POZITIE NEUTRA...\n", name);
+  delay(1000);
+  computeNeutralAngles(neutralSamples);
+  Serial.printf("[%s] POZITIE NEUTRA DETERMINATA.\n", name);
+  Serial.printf("[%s] DETERMINARE ACCELERATIE MAXIMA...\n", name);
+  delay(1000);
+  findMaxAccel(accelTime);
+  Serial.printf("[%s] ACCELERATIE MAXIMA DETERMINATA...\n", name);
+  Serial.printf("[%s] DETERMINARE RANGE OF MOTION...\n", name);
+  delay(1000);
+  findROM(romTime);
+  Serial.printf("[%s] RANGE OF MOTION DETERMINAT...\n", name);
+}
+
+void MPU_6050::printCalibrationData() {
+  Serial.printf("[%s] OFFSET GX: %.2f, GY: %.2f, GZ: %.2f\n", name, gyroOffsetX, gyroOffsetY, gyroOffsetZ);
+  Serial.printf("[%s] NEUTRAL ROLL: %.2f, PITCH: %.2f\n", name, neutralRoll, neutralPitch);
+  Serial.printf("[%s] THRESHOLD: %.2f\n", name, accelThreshold);
+  Serial.printf("[%s] ROM - ROLL: (%.2f to %.2f), PITCH: (%.2f to %.2f)\n", name,
+                minRoll, maxRoll, minPitch, maxPitch);
+}
+
+float MPU_6050::getRoll(){
+  return roll;
+}
+
+float MPU_6050::getPitch(){
+  return pitch;
+}
+
+void MPU_6050::findRelativeAccelOffset(MPU_6050 &ref, long time){
+  float sum = 0.0f;
+  int samples_no = 0;
+  long start = millis();
+  while(millis() - start < time){
+    readAccel();
+    ref.readAccel();
+
+    float magThis = sqrt(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+    float magRef = sqrt(ref.ax_g * ref.ax_g + ref.ay_g * ref.ay_g + ref.az_g * ref.az_g);
+
+    sum += abs(magThis - magRef);
+    samples_no++;
+  }
+
+  refAccelThreshold = sum / samples_no;
+}
+
+void MPU_6050::selectMux(){
+  ::selectMuxChannel(muxChannel);
+}
+
+ClickSignature MPU_6050::analyzeClickRelative(MPU_6050 &ref, int windowMs) {
+  ClickSignature sig = {0, 0, millis()};
+
+  readAccel();
+  ref.readAccel();
+  computeAngles();
+  float maxPitch = pitch, minPitch = pitch;
+  float maxRoll = roll, minRoll = roll;
+  float peakRelAccel = 0;
+
+  unsigned long start = millis();
+  while (millis() - start < windowMs) {
+    readAccel();
+    ref.readAccel();
+    computeAngles();
+
+    maxPitch = max(maxPitch, pitch);
+    minPitch = min(minPitch, pitch);
+    maxRoll = max(maxRoll, roll);
+    minRoll = min(minRoll, roll);
+
+    float magThis = sqrt(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+    float magRef  = sqrt(ref.ax_g * ref.ax_g + ref.ay_g * ref.ay_g + ref.az_g * ref.az_g);
+    float relMag  = abs(magThis - magRef);
+    if (relMag > peakRelAccel) peakRelAccel = relMag;
+
+    delay(5);
+  }
+
+  float deltaPitch = maxPitch - minPitch;
+  float deltaRoll  = maxRoll - minRoll;
+  float deltaAngle = sqrt(deltaPitch * deltaPitch + deltaRoll * deltaRoll);
+
+  sig.deltaAngle = deltaAngle;
+  sig.peakRelAccel = peakRelAccel;
+
+  return sig;
+}
