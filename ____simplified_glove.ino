@@ -40,6 +40,11 @@ float filteredRelIndex = 0;
 float filteredRelLittle = 0;
 const float SMOOTHING = 0.2f;  // între 0.1 și 0.3
 
+// prevent tiny float errors from pushing us outside [–1…1]
+static inline float clamp1(float x) {
+  return x < -1 ? -1 : (x > +1 ? +1 : x);
+}
+
 void setup() {
   Wire.begin(21, 22, 50000);
   Serial.begin(115200);
@@ -150,13 +155,28 @@ float calcRelAccel(MPU_6050 &finger) {
 }
 
 float calcRelAngle(MPU_6050 &finger) {
-  mpuPALM.computeAngles();
-  finger.computeAngles();
+  // Make sure both sensors have fresh accel→ax_g,ay_g,az_g
+  mpuPALM.readAccel();
+  finger.readAccel();
 
-  float dR = wrap180(finger.getRoll()  - mpuPALM.getRoll());
-  float dP = wrap180(finger.getPitch() - mpuPALM.getPitch());
+  // 1) compute each magnitude
+  float magP = sqrt(mpuPALM.ax_g*mpuPALM.ax_g
+                  + mpuPALM.ay_g*mpuPALM.ay_g
+                  + mpuPALM.az_g*mpuPALM.az_g);
+  float magF = sqrt(finger.ax_g*finger.ax_g
+                  + finger.ay_g*finger.ay_g
+                  + finger.az_g*finger.az_g);
 
-  return sqrt(dR*dR + dP*dP);
+  // 2) compute their dot
+  float dot =  mpuPALM.ax_g * finger.ax_g
+             + mpuPALM.ay_g * finger.ay_g
+             + mpuPALM.az_g * finger.az_g;
+
+  // 3) normalize & clamp
+  float cosA = clamp1(dot / (magP * magF));
+
+  // 4) acos→degrees
+  return acos(cosA) * 180.0f / PI;
 }
 
 void fsmStep(FingerID id, float relAccel, float relAngle, unsigned long now, float peakThreshold, float fallThreshold) {
@@ -230,10 +250,3 @@ void reportPalmPosition() {
   if (pitch > midPitch)   Serial.println("Palm: flexie");
   else                    Serial.println("Palm: extensie");
 }
-
-float wrap180(float a){
-  a = fmod(a + 180.0f, 360.0f);
-  if (a < 0) a += 360.0f;
-  return a - 180.0f;
-}
-
