@@ -31,9 +31,7 @@ class MPU_6050 {
 
     float gyroOffsetX = 0.0f, gyroOffsetY = 0.0f, gyroOffsetZ = 0.0f;
     float neutralRoll = 0.0f, neutralPitch = 0.0f;
-    float maxAccelMag = 0.0f;
     float accelThreshold = 0.0f;
-    float refAccelThreshold = 0.0f;
 
     float filteredRoll = 0.0f;
     float filteredPitch = 0.0f;
@@ -51,22 +49,21 @@ class MPU_6050 {
     void computeAngles();
     float getRoll();
     float getPitch();
+    float getMinRoll();
+    float getMaxRoll();
+    float getMinPitch();
+    float getMaxPitch();
     void computeGyroOffsets(int samples = 100);
-    void computeNeutralAngles(int samples = 100);
-    void findMaxAccel(long time = 5000);
     void applyOffsetCorrection();
+    void computeNeutralAngles(int samples = 100);
 
-    void initSensor(int gyroSamples, int neutralSamples, long accelTime, long romTime);
+    void initSensor(int gyroSamples, int neutralSamples, long romTime);
 
     int getTotalAccelReadings();
     int getFailedAccelReadings();
     int getFaultyAccelReadings();
     float getFailedAccelPercent();
     float getFaultyAccelPercent();
-
-    int checkClick();
-    int checkClickRelative(MPU_6050 &ref);
-    ClickSignature analyzeClickRelative(MPU_6050 &ref, int windowMs = 200);
 
     void findRelativeAccelOffset(MPU_6050 &ref, long time);
 
@@ -79,11 +76,8 @@ class MPU_6050 {
     void printDebug();
 
   private:
-    //gesture detection attributes
-    unsigned long lastAccelSpikeTime = 0;
+    //gesture detection attributes  
     bool prevAccelAboveThreshold = false;
-    bool singleClickPending = false;
-    const long doubleClickTimeout = 2500;
 
     //rom attributes
     float minPitch = 91.0f, maxPitch = -91.0f;
