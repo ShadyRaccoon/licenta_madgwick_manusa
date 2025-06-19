@@ -2,6 +2,19 @@
 #include "MPU_6050.h"
 
 //–– CONFIGURATION ––
+unsigned long palmSpikeTs = 0;
+const unsigned long PALM_COOLDOWN = 1000;  // ms
+
+float palmEWMA = 0.0f;
+const float PALM_ALPHA     = 0.1f;   // small alpha => slow, smooth palm signal
+const float PALM_THRESHOLD = 1.10f;
+
+const int   PALM_BUF_SZ    = 25;
+const float PALM_STEADY_DEG = 0.01f;   // allow ±0.1g around the avg
+float       palmBuf[PALM_BUF_SZ];
+int         palmBufPos     = 0;
+bool        palmBufWarm    = false;
+
 const int    RECALIB_INTERVAL = 200;    // not used for dual-EWMA, but kept for reference
 const float  ALPHA_FAST       = 0.3f;   // EWMA α for fast tracking (0.0–1.0)
 const float  LIT_MIN_PEAK     = 0.30f;  // little finger floor for peak
@@ -158,6 +171,43 @@ void loop() {
   portENTER_CRITICAL(&sampleMux);
     memcpy(&s, &latestSample, sizeof(s));
   portEXIT_CRITICAL(&sampleMux);
+  float rawPalm = s.palmMag;
+
+  // 2) Fill steady‐hand ring buffer
+  palmBuf[palmBufPos] = rawPalm;
+  if (++palmBufPos >= PALM_BUF_SZ) {
+    palmBufPos = 0;
+    palmBufWarm = true;
+  }
+
+  // 3) Compute steady‐hand mean
+  float palmMean = rawPalm;
+  if (palmBufWarm) {
+    palmMean = 0;
+    for (int i = 0; i < PALM_BUF_SZ; i++) palmMean += palmBuf[i];
+    palmMean /= PALM_BUF_SZ;
+  }
+
+  // 4) Update slow Palm EWMA
+  palmEWMA = PALM_ALPHA * palmEWMA + (1 - PALM_ALPHA) * rawPalm;
+  Serial.printf("PALM raw=%.2fg  EWMA=%.2fg  mean=%.2fg\n",
+                rawPalm, palmEWMA, palmMean);
+
+  // 5) Gate if palm is spiking or unsteady
+  if (palmEWMA > PALM_THRESHOLD || fabs(rawPalm - palmMean) > PALM_STEADY_DEG) {
+    Serial.println("  → skipping click detection (palm moving)");
+    // reset buffer so we re-learn a fresh steady mean next time
+    palmSpikeTs = millis();
+    palmBufWarm = false;
+    palmBufPos  = 0;
+    stI = stL = IDLE;
+    return;
+  }
+
+  if (millis() - palmSpikeTs < PALM_COOLDOWN) {
+    // still in palm-spike cooldown
+    return;
+  }
 
   // 2) Compute rel-accels
   float relI = s.relI;
