@@ -1,260 +1,245 @@
+// ESP32 Double-Click Detection — Multicore Version
+// =====================================================
+// **Overview**:
+// - Core 0 (`taskSensor`): Reads three MPU-6050 accelerometers, computes
+//   relative acceleration (finger vs. palm) and dot-product/squared-magnitude
+//   data for angle tests at ~200 Hz, and publishes to a shared struct.
+// - Core 1 (`loop`): Retrieves each sample, updates adaptive thresholds (EWMA),
+//   and runs two FSMs (INDEX and LITTLE) to detect double-click gestures
+//   based on accel spikes and measured angular bounce-back.
+
+#include <Wire.h>
 #include "MPU_6050.h"
 
-// enum pentru apel
-enum FingerID { INDEX, LITTLE };
+//–– CONFIGURATION ––
+const int    RECALIB_INTERVAL = 25;     // samples per threshold update
+const float  ALPHA_THRESH     = 0.80f;  // EWMA blend factor
+const float  MIN_ANGLE        = 35.0f;  // min bounce-back (deg)
+const unsigned long MAX_DT1   = 1000;   // ms max between spike1→spike2
+const unsigned long MAX_DT2   = 2000;   // ms max total window
 
+//–– LITTLE-FINGER SENSITIVITY CLAMPS ––
+const float LIT_MIN_PEAK = 0.50f;  // never require >0.5g spike
+const float LIT_MIN_FALL = 0.30f;  // never require <0.3g fall
+
+//–– MPU INSTANCES ––
 MPU_6050 mpuPALM(0x68, 0, "PALM");
 MPU_6050 mpuINDX(0x68, 1, "INDEX");
 MPU_6050 mpuLITT(0x68, 2, "LITTLE");
 
-// Variabile pentru calibrare
-unsigned long loopCount = 0;
-const unsigned long RECALIB_EVERY = 100; 
-
-bool calibrated = false;
-unsigned long calibStart;
-const unsigned long CALIB_DURATION = 2000; // 2 sec
-unsigned long calibCount = 0;
-double sumRelI = 0;
-double sumRel2I = 0;
-double sumRelL = 0;
-double sumRel2L = 0;
-
-// Praguri (se vor inițializa după calibrare)
-float peakThresholdI = 0.0f;
-float fallThresholdI = 0.0f;
-
-float peakThresholdL = 0.0f;
-float fallThresholdL = 0.0f;
-
-// FSM pentru degete
+//–– CLICK-FSM STATE ––
 enum ClickState { IDLE, SPIKE1, WAIT1, SPIKE2, VALIDATE };
-ClickState  stateIndex = IDLE, stateLittle = IDLE;
-// timestamps and angles
-unsigned long t1Index, t2Index, t1Little, t2Little;
-float a1Index, a2Index, a1Little, a2Little;
-// your timing and angle thresholds
-const unsigned long MAX_TIME1 = 750;   // ms between spike1→spike2
-const unsigned long MAX_TIME2 = 1500;   // total ms allowed
-const float MIN_ANGLE  = 5.0f; // degrees
+ClickState stateI = IDLE, stateL = IDLE;
 
-// Filtru EWMA pentru accel relativ
-float filteredRelIndex = 0;
-float filteredRelLittle = 0;
-const float SMOOTHING = 0.2f;  // între 0.1 și 0.3
+// Adaptive thresholds
+float peakI = 0, fallI = 0;
+float peakL = 0, fallL = 0;
 
-// prevent tiny float errors from pushing us outside [–1…1]
-static inline float clamp1(float x) {
-  return x < -1 ? -1 : (x > +1 ? +1 : x);
+// Buffers for recalibration
+float bufRelI[RECALIB_INTERVAL];
+float bufRelL[RECALIB_INTERVAL];
+int   bufPos = 0;
+
+// Timestamps/angles for FSM
+unsigned long t1I, t2I, t1L, t2L;
+float a1I, a2I, a1L, a2L;
+
+//–– SHARED SAMPLE STRUCT ––
+struct Sample {
+  float relI, relL;           // relative accel
+  float dotI, mag2PI, mag2FI; // index angle test
+  float dotL, mag2PL, mag2FL; // little angle test
+  unsigned long ts;
+};
+static Sample latestSample;
+portMUX_TYPE sampleMux = portMUX_INITIALIZER_UNLOCKED;
+
+//–– UTILITY ––
+static inline float calcAngleDeg(float dot, float m2p, float m2f) {
+  float cosA = dot / sqrt(m2p * m2f);
+  cosA = constrain(cosA, -1.0f, 1.0f);
+  return acos(cosA) * 180.0f/PI;
 }
 
+// forward sensor task
+void taskSensor(void* pv);
+
+//–– SETUP ––
 void setup() {
-  Wire.begin(21, 22, 50000);
   Serial.begin(115200);
+  Wire.begin(21, 22);
 
-  // Inițializare și calibrare giroscop + poziție neutră pentru palmă
-  mpuPALM.initSensor(300, 300, 5000);
-  mpuPALM.printCalibrationData();
-  // După aceasta, minPitch/maxPitch și minRoll/maxRoll pentru palmă sunt setate
+  mpuPALM.initSensor(300,300,5000);
+  mpuINDX.initSensor(0,0,0);
+  mpuLITT.initSensor(0,0,0);
 
-  // Inițializare degete (fără ROM)
-  mpuINDX.initSensor(0, 0, 0);
-  mpuLITT.initSensor(0, 0, 0);
+  for (int i = 0; i < RECALIB_INTERVAL; i++)
+    bufRelI[i] = bufRelL[i] = 0;
 
-  // Pornim calibrarea pentru praguri
-  calibStart = millis();
-}
-
-void loop() {
-  unsigned long now = millis();
-
-  // 1) Citește accelerațiile
-  mpuPALM.readAccel();
-  mpuINDX.readAccel();
-  mpuLITT.readAccel();
-
-  // 2) Dacă suntem încă în calibrare:
-  if (!calibrated && now - calibStart < CALIB_DURATION) {
-    // index
-    float dxI = mpuINDX.ax_g - mpuPALM.ax_g;
-    float dyI = mpuINDX.ay_g - mpuPALM.ay_g;
-    float dzI = mpuINDX.az_g - mpuPALM.az_g;
-    float rI = sqrt(dxI*dxI + dyI*dyI + dzI*dzI);
-
-    float dxL = mpuLITT.ax_g - mpuPALM.ax_g;
-    float dyL = mpuLITT.ay_g - mpuPALM.ay_g;
-    float dzL = mpuLITT.az_g - mpuPALM.az_g;
-    float rL = sqrt(dxL*dxL + dyL*dyL + dzL*dzL);
-
-    calibCount++;
-    sumRelI  += rI;
-    sumRel2I += rI * rI;
-
-    sumRelL  += rL;
-    sumRel2L += rL * rL;
-
-    return;
-  }
-
-  // post calibrare
-  if (!calibrated) {
-    float meanI = sumRelI  / calibCount;
-    float varianceI = (sumRel2I / calibCount) - meanI * meanI;
-    float stdDevI = sqrt(varianceI);
-
-    float meanL = sumRelL  / calibCount;
-    float varianceL = (sumRel2L / calibCount) - meanL * meanL;
-    float stdDevL = sqrt(varianceL);
-
-    peakThresholdI = meanI + 4.0f * stdDevI;
-    fallThresholdI = meanI + 1.0f * stdDevI;
-
-    peakThresholdL = meanL + 4.0f * stdDevL;
-    fallThresholdL = meanL + 1.0f * stdDevL;
-
-    Serial.printf("[INDX] Prag spike: %.3f  |  Prag cădere: %.3f\n",
-                  peakThresholdI, fallThresholdI);
-
-    Serial.printf("[LITT] Prag spike: %.3f  |  Prag cădere: %.3f\n",
-                  peakThresholdL, fallThresholdL);
-    calibrated = true;
-  }
-
-  // De aici începe detecția efectivă...
-  detectClicks();
-}
-
-void detectClicks() {
-  unsigned long now = millis();
-
-  // 0) DEBUG — print both relAccel & angle vs their thresholds
-  float relI = calcRelAccel(mpuINDX);
-  float relL = calcRelAccel(mpuLITT);
-  float angI = calcRelAngle(mpuINDX);
-  float angL = calcRelAngle(mpuLITT);
-    Serial.printf(
-    "[DBG] INDEX relA=%.3f (peak=%.3f, fall=%.3f)  "
-    "LITTLE relA=%.3f (peak=%.3f, fall=%.3f)  "
-    "angI=%.2f  angL=%.2f\n",
-    relI, peakThresholdI, fallThresholdI,
-    relL, peakThresholdL, fallThresholdL,
-    angI, angL
+  xTaskCreatePinnedToCore(
+    taskSensor, "Sensor", 4096, nullptr, 1, nullptr, 0
   );
-
-  // 1) Now run your FSMs as before
-  fsmStep(INDEX,  relI,  angI, now, peakThresholdI, fallThresholdI);
-  fsmStep(LITTLE, relL,  angL, now, peakThresholdL, fallThresholdL);
 }
 
+//–– MAIN LOOP (core 1) ––
+void loop() {
+  // 1) grab sample
+  Sample s;
+  portENTER_CRITICAL(&sampleMux);
+    memcpy(&s, &latestSample, sizeof(s));
+  portEXIT_CRITICAL(&sampleMux);
 
+  // 2) buffer rel‐accel
+  bufRelI[bufPos] = s.relI;
+  bufRelL[bufPos] = s.relL;
+  bufPos = (bufPos + 1) % RECALIB_INTERVAL;
 
-float calcRelAccel(MPU_6050 &finger) {
-  float dx = finger.ax_g - mpuPALM.ax_g;
-  float dy = finger.ay_g - mpuPALM.ay_g;
-  float dz = finger.az_g - mpuPALM.az_g;
-  return sqrt(dx*dx + dy*dy + dz*dz);
+  // 3) update thresholds
+  static int cnt = 0;
+  static bool warmed = false;
+  if (!warmed) {
+    if (++cnt >= RECALIB_INTERVAL) { warmed = true; cnt = 0; }
+  } else if (++cnt >= RECALIB_INTERVAL) {
+    // sums & variances
+    float sumI=0, sqI=0, sumL=0, sqL=0;
+    for (int i = 0; i < RECALIB_INTERVAL; i++) {
+      sumI += bufRelI[i]; sqI += bufRelI[i]*bufRelI[i];
+      sumL += bufRelL[i]; sqL += bufRelL[i]*bufRelL[i];
+    }
+    float mI = sumI/RECALIB_INTERVAL;
+    float vI = max(0.0f, sqI/RECALIB_INTERVAL - mI*mI);
+    float sI = sqrt(vI);
+    float mL = sumL/RECALIB_INTERVAL;
+    float vL = max(0.0f, sqL/RECALIB_INTERVAL - mL*mL);
+    float sL = sqrt(vL);
+
+    // compute new raw thresholds
+    float newPI = mI + 1.1f*sI, newFI = mI + 0.1f*sI;
+    float newPL = mL + 0.8f*sL, newFL = mL + 0.1f*sL;
+
+    // EWMA blend
+    peakI = ALPHA_THRESH*peakI + (1-ALPHA_THRESH)*newPI;
+    fallI = ALPHA_THRESH*fallI + (1-ALPHA_THRESH)*newFI;
+
+    peakL = ALPHA_THRESH*peakL + (1-ALPHA_THRESH)*newPL;
+    fallL = ALPHA_THRESH*fallL + (1-ALPHA_THRESH)*newFL;
+
+    // clamp little‐finger thresholds to minimums
+    peakL = max(peakL, LIT_MIN_PEAK);
+    fallL = max(fallL, LIT_MIN_FALL);
+
+    Serial.printf("New thresholds -> I(%.2f,%.2f) L(%.2f,%.2f)\n",
+                  peakI, fallI, peakL, fallL);
+    cnt = 0;
+  }
+
+  // 4) compute angles
+  float angI = calcAngleDeg(s.dotI, s.mag2PI, s.mag2FI);
+  float angL = calcAngleDeg(s.dotL, s.mag2PL, s.mag2FL);
+
+  // 5) run FSMs
+  bool indexDominant = (s.relI > s.relL);
+
+  if (indexDominant) {
+    // only INDEX can advance - reset LITTLE outright
+    fsmStep(stateI, s.relI, angI,
+            t1I, t2I, a1I, a2I,
+            peakI, fallI, "INDEX");
+    stateL = IDLE;
+  }
+  else {
+    // only LITTLE can advance - reset INDEX outright
+    fsmStep(stateL, s.relL, angL,
+            t1L, t2L, a1L, a2L,
+            peakL, fallL, "LITTLE");
+    stateI = IDLE;
+  }
+
+  delay(1);
 }
 
-float calcRelAngle(MPU_6050 &finger) {
-  // Make sure both sensors have fresh accel→ax_g,ay_g,az_g
-  mpuPALM.readAccel();
-  finger.readAccel();
+//–– SENSOR TASK (core 0) ––
+void taskSensor(void* pv) {
+  Sample tmp;
+  while (1) {
+    mpuPALM.readAccel();
+    mpuINDX.readAccel();
+    mpuLITT.readAccel();
 
-  // 1) compute each magnitude
-  float magP = sqrt(mpuPALM.ax_g*mpuPALM.ax_g
-                  + mpuPALM.ay_g*mpuPALM.ay_g
-                  + mpuPALM.az_g*mpuPALM.az_g);
-  float magF = sqrt(finger.ax_g*finger.ax_g
-                  + finger.ay_g*finger.ay_g
-                  + finger.az_g*finger.az_g);
+    tmp.relI = sqrt(sq(mpuINDX.ax_g - mpuPALM.ax_g)
+                  + sq(mpuINDX.ay_g - mpuPALM.ay_g)
+                  + sq(mpuINDX.az_g - mpuPALM.az_g));
+    tmp.relL = sqrt(sq(mpuLITT.ax_g - mpuPALM.ax_g)
+                  + sq(mpuLITT.ay_g - mpuPALM.ay_g)
+                  + sq(mpuLITT.az_g - mpuPALM.az_g));
 
-  // 2) compute their dot
-  float dot =  mpuPALM.ax_g * finger.ax_g
-             + mpuPALM.ay_g * finger.ay_g
-             + mpuPALM.az_g * finger.az_g;
+    tmp.dotI   = mpuPALM.ax_g*mpuINDX.ax_g
+               + mpuPALM.ay_g*mpuINDX.ay_g
+               + mpuPALM.az_g*mpuINDX.az_g;
+    tmp.mag2PI = sq(mpuPALM.ax_g) + sq(mpuPALM.ay_g) + sq(mpuPALM.az_g);
+    tmp.mag2FI = sq(mpuINDX.ax_g) + sq(mpuINDX.ay_g) + sq(mpuINDX.az_g);
 
-  // 3) normalize & clamp
-  float cosA = clamp1(dot / (magP * magF));
+    tmp.dotL   = mpuPALM.ax_g*mpuLITT.ax_g
+               + mpuPALM.ay_g*mpuLITT.ay_g
+               + mpuPALM.az_g*mpuLITT.az_g;
+    tmp.mag2PL = tmp.mag2PI;
+    tmp.mag2FL = sq(mpuLITT.ax_g) + sq(mpuLITT.ay_g) + sq(mpuLITT.az_g);
 
-  // 4) →degrees
-  return acos(cosA) * 180.0f / PI;
+    tmp.ts = millis();
+
+    portENTER_CRITICAL(&sampleMux);
+      memcpy(&latestSample, &tmp, sizeof(tmp));
+    portEXIT_CRITICAL(&sampleMux);
+
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
 }
 
-void fsmStep(FingerID id,
-             float relAccel, float angle,
-             unsigned long now,
-             float peakThr, float fallThr)
-{
-  // pick the right state and storage
-  ClickState &st  = (id==INDEX ? stateIndex  : stateLittle);
-  unsigned long &t1 = (id==INDEX ? t1Index : t1Little);
-  unsigned long &t2 = (id==INDEX ? t2Index : t2Little);
-  float        &a1 = (id==INDEX ? a1Index  : a1Little);
-  float        &a2 = (id==INDEX ? a2Index  : a2Little);
-  const char   *name = (id==INDEX ? "INDEX" : "LITTLE");
-
+//–– CLICK FSM FUNCTION ––
+void fsmStep(ClickState& st,
+             float rel,
+             float angle,
+             unsigned long& t1,
+             unsigned long& t2,
+             float& a1,
+             float& a2,
+             float peak,
+             float fall,
+             const char* name) {
+  unsigned long now = millis();
   switch(st) {
     case IDLE:
-      if (relAccel > peakThr) {
-        st = SPIKE1;
-        Serial.printf("[%s] → SPIKE1 (relA=%.3f > %.3f)\n", name, relAccel, peakThr);
+      if (rel > peak) {
+        st = SPIKE1;  Serial.printf("[%s] SPIKE1\n", name);
       }
       break;
-
     case SPIKE1:
-      if (relAccel < fallThr) {
-        t1 = now;  a1 = angle;
-        st = WAIT1;
-        Serial.printf("[%s] → FALL to WAIT1: t1=%lu, a1=%.2f°\n", name, t1, a1);
+      if (rel < fall) {
+        t1 = now; a1 = angle; st = WAIT1;
+        Serial.printf("[%s] FALL→WAIT1\n", name);
       }
       break;
-
     case WAIT1:
-      if (now - t1 > MAX_TIME1) {
-        Serial.printf("[%s] WAIT1 timeout (dt=%lums) → IDLE\n", name, now - t1);
-        st = IDLE;
-      }
-      else if (relAccel > peakThr) {
-        st = SPIKE2;
-        Serial.printf("[%s] → SPIKE2 (relA=%.3f > %.3f)\n", name, relAccel, peakThr);
+      if (now - t1 > MAX_DT1) st = IDLE;
+      else if (rel > peak) {
+        st = SPIKE2; Serial.printf("[%s] SPIKE2\n", name);
       }
       break;
-
     case SPIKE2:
-      if (relAccel < fallThr) {
-        t2 = now;  a2 = angle;
-        st = VALIDATE;
-        Serial.printf("[%s] → FALL2 to VALIDATE: t2=%lu, a2=%.2f°\n", name, t2, a2);
+      if (rel < fall) {
+        t2 = now; a2 = angle; st = VALIDATE;
+        Serial.printf("[%s] FALL2→VALIDATE\n", name);
       }
       break;
-
-    case VALIDATE:
-      {
-        unsigned long dt = t2 - t1;
-        float dA = fabs(a2 - a1);
-        Serial.printf("[%s] VALIDATE: dt=%lums, dA=%.2f°\n", name, dt, dA);
-        if (dt < MAX_TIME2 && dA > MIN_ANGLE) {
-          Serial.printf("✔ %s click @ %lu\n", name, now);
-          delay(2000);
-        }
-        st = IDLE;
+    case VALIDATE: {
+      unsigned long dt = t2 - t1;
+      float da = fabs(a2 - a1);
+      Serial.printf("[%s] VALIDATE dt=%lums da=%.2f°\n", name, dt, da);
+      if (dt < MAX_DT2 && da > MIN_ANGLE) {
+        Serial.printf("✔ %s click\n", name);
+        delay(500);
       }
-      break;
+      st = IDLE;
+    } break;
   }
-}
-
-
-
-void reportPalmPosition() {
-  float roll  = mpuPALM.getRoll();
-  float pitch = mpuPALM.getPitch();
-
-  float midRoll  = (mpuPALM.getMinRoll()  + mpuPALM.getMaxRoll())  * 0.5f;
-  float midPitch = (mpuPALM.getMinPitch() + mpuPALM.getMaxPitch()) * 0.5f;
-
-  if (roll > midRoll)     Serial.println("Palm: supinatie");
-  else                    Serial.println("Palm: pronatie");
-
-  if (pitch > midPitch)   Serial.println("Palm: flexie");
-  else                    Serial.println("Palm: extensie");
 }
