@@ -9,18 +9,18 @@ float palmEWMA = 0.0f;
 const float PALM_ALPHA     = 0.1f;   // small alpha => slow, smooth palm signal
 const float PALM_THRESHOLD = 1.10f;
 
-const int   PALM_BUF_SZ    = 25;
+const int PALM_BUF_SZ       = 100;
 const float PALM_STEADY_DEG = 0.01f;   // allow ±0.1g around the avg
-float       palmBuf[PALM_BUF_SZ];
-int         palmBufPos     = 0;
-bool        palmBufWarm    = false;
+float palmBuf[PALM_BUF_SZ];
+int palmBufPos      = 0;
+bool palmBufWarm    = false;
 
 const int    RECALIB_INTERVAL = 200;    // not used for dual-EWMA, but kept for reference
 const float  ALPHA_FAST       = 0.3f;   // EWMA α for fast tracking (0.0–1.0)
 const float  LIT_MIN_PEAK     = 0.30f;  // little finger floor for peak
 const float  LIT_MIN_FALL     = 0.15f;  // little finger floor for fall
 const float  MIN_ANGLE        = 20.0f;  // degrees for bounce-back
-const unsigned long MAX_DT1   = 800;    // ms between spike1→spike2
+const unsigned long MAX_DT1   = 800;    // ms between spike1 and spike2
 const unsigned long MAX_DT2   = 1200;   // ms total for both spikes
 const unsigned long PHASE_MS  = 50;     // how long before flipping EWMA phase
 
@@ -29,11 +29,23 @@ MPU_6050 mpuPALM(0x68,0,"PALM"),
         mpuINDX(0x68,1,"INDEX"),
         mpuLITT(0x68,2,"LITTLE");
 
+//-- PALM GESTURES --
+enum Direction{ FRONT, BACK, LEFT, RIGHT, HOVER, NEUTRAL};
+
 //–– CLICK FSM ––
 enum ClickState { IDLE, SPIKE1, WAIT1, SPIKE2, VALIDATE };
 ClickState stI=IDLE, stL=IDLE;
 unsigned long t1I,t2I,t1L,t2L;
 float a1I,a2I,a1L,a2L;
+
+const unsigned long DOUBLE_CLICK_WINDOW = 1500; //ms
+const unsigned long CLICK_COOLDOWN = 400;
+
+unsigned long lastClickTimeI = 0;
+uint8_t clickCountI          = 0;
+
+unsigned long lastClickTimeL = 0;
+uint8_t clickCountL          = 0; 
 
 //–– INTER-CORE SHARED SAMPLE ––
 struct Sample {
@@ -101,7 +113,26 @@ void taskSensor(void* pv) {
   }
 }
 
-//–– CLICK FSM FUNCTION ––
+//–– CLICK FSM FUNCTION & HELPER––
+void clickCounter(bool isIndex){
+  unsigned long now = millis();
+
+  unsigned long &lastClickTime = isIndex ? lastClickTimeI : lastClickTimeL;
+  uint8_t &clickCount = isIndex? clickCountI : clickCountL;
+
+  if(clickCount == 1 && (now - lastClickTime < CLICK_COOLDOWN)) return;
+
+  if(clickCount == 1 && (now - lastClickTime < DOUBLE_CLICK_WINDOW)){
+    Serial.printf("✔ %s DOUBLE-CLICK\n", isIndex?"INDEX":"LITTLE");
+    delay(1000);
+    clickCount = 0;      // reset
+    lastClickTime = 0;
+  } else {
+    clickCount = 1;
+    lastClickTime = now;
+  }
+}
+
 void fsmStep(ClickState& st,
              float rel,
              float palmMag,
@@ -145,12 +176,16 @@ void fsmStep(ClickState& st,
       if (dt < MAX_DT2 && da > MIN_ANGLE){
         Serial.printf("[%s] VALIDATE dt=%lums da=%.2f° rel=%.2fg palm=%.2fg diff=%.2fg\n",
                 name, dt, da, rel, palmMag, palmMag-rel);
-        Serial.printf("✔ %s click\n", name);
-        delay(1500);  
+        clickCounter(strcmp(name, "INDEX") == 0);
       }
       st = IDLE;
     } break;
   }
+}
+
+//-- DIRECTION FUNCTION --
+void checkDirection(){
+  
 }
 
 //–– SETUP ––
@@ -160,7 +195,15 @@ void setup() {
   mpuPALM.initSensor(300,300,5000);
   mpuINDX.initSensor(0,0,0);
   mpuLITT.initSensor(0,0,0);
-  xTaskCreatePinnedToCore(taskSensor, "Sensor", 4096, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(
+    taskSensor, 
+    "Sensor", 
+    4096, 
+    nullptr, 
+    1, 
+    nullptr, 
+    0
+  );
   lastSwitch = millis();
 }
 
@@ -195,8 +238,6 @@ void loop() {
 
   // 5) Gate if palm is spiking or unsteady
   if (palmEWMA > PALM_THRESHOLD || fabs(rawPalm - palmMean) > PALM_STEADY_DEG) {
-    Serial.println("  → skipping click detection (palm moving)");
-    // reset buffer so we re-learn a fresh steady mean next time
     palmSpikeTs = millis();
     palmBufWarm = false;
     palmBufPos  = 0;
@@ -205,7 +246,6 @@ void loop() {
   }
 
   if (millis() - palmSpikeTs < PALM_COOLDOWN) {
-    // still in palm-spike cooldown
     return;
   }
 
