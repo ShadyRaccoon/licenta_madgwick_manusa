@@ -55,20 +55,6 @@ void MPU_6050::readAccel() {
   if (!isValid) faultyAccelReadings++;
   smoothAccel(&ax_g, &ay_g, &az_g, isValid);
 }
-/*
-void MPU_6050::findROM(long time){
-  long start = millis();
-  while(millis() - start < time){
-    readAccel();
-    computeAngles();
-    if(roll > maxRoll) maxRoll = roll;
-    if(roll < minRoll) minRoll = roll;
-    if(pitch > maxPitch) maxPitch = pitch;
-    if(pitch < minPitch) minPitch = pitch; 
-    //delay(5);
-  }
-}
-*/
 
 void MPU_6050::findROM(long time){
   long start = millis();
@@ -78,6 +64,7 @@ void MPU_6050::findROM(long time){
     if(ax_g < minAX) minAX = ax_g;
     if(ay_g > maxAY) maxAY = ay_g;
     if(ay_g < minAY) minAY = ay_g; 
+    //delay(5);
   }
 }
 
@@ -127,17 +114,17 @@ void MPU_6050::readGyro() {
 }
 
 void MPU_6050::computeAngles() {
-  readGyro();
   readAccel();
-  // 2) update our per-instance filter
-  filter.updateIMU(gx_dps, gy_dps, gz_dps,
-                    ax_g,   ay_g,   az_g);
+  float rawRoll = atan2(ay_g, az_g) * 180.0f / PI;
+  float rawPitch = atan2(-ax_g, sqrt(ay_g * ay_g + az_g * az_g)) * 180.0f / PI;
 
-  // 3) copy its quaternion out for anyone who needs it
-  q0 = filter.q0;
-  q1 = filter.q1;
-  q2 = filter.q2;
-  q3 = filter.q3;
+  const float alpha = 0.7f;  // Smoothing factor (0.8–0.95)
+
+  filteredRoll  = alpha * filteredRoll  + (1 - alpha) * rawRoll;
+  filteredPitch = alpha * filteredPitch + (1 - alpha) * rawPitch;
+
+  roll = filteredRoll;
+  pitch = filteredPitch;
 }
 
 void MPU_6050::computeGyroOffsets(int samples) {
@@ -164,17 +151,6 @@ void MPU_6050::computeNeutralAngles(int samples) {
   }
   neutralRoll = rollSum / samples;
   neutralPitch = pitchSum / samples;
-}
-
-void MPU_6050::computeNeutralAccelerations(int samples) {
-  float axSum = 0, aySum = 0;
-  if(samples == 0) return;
-  for (int i = 0; i < samples; i++) {
-    axSum += ax_g;
-    aySum += ay_g;
-  }
-  neutralAX = axSum / samples;
-  neutralAY = aySum / samples;
 }
 
 
@@ -220,7 +196,6 @@ void MPU_6050::initSensor(int gyroSamples, int neutralSamples, long romTime){
   delay(1000);
   findROM(romTime);
   Serial.printf("[%s] RANGE OF MOTION DETERMINAT...\n", name);
-  filter.begin(100);
 }
 
 void MPU_6050::printCalibrationData() {
@@ -231,36 +206,44 @@ void MPU_6050::printCalibrationData() {
                 minRoll, maxRoll, minPitch, maxPitch);
 }
 
-float MPU_6050::getRoll() {
-  // roll = atan2(2(q0 q1 + q2 q3), 1 − 2(q1² + q2²))
-  return atan2f(2*(q0*q1 + q2*q3),
-                1 - 2*(q1*q1 + q2*q2)) * 180.0f/PI;
+float MPU_6050::getRoll(){
+  return roll;
 }
 
-static inline float clamp1(float x) {
-  return x < -1 ? -1 : (x > +1 ? +1 : x);
-}
-
-float MPU_6050::getPitch() {
-  // pitch = asin(2(q0 q2 − q3 q1))
-  return asinf( clamp1(2*(q0*q2 - q3*q1)) ) * 180.0f/PI;
+float MPU_6050::getPitch(){
+  return pitch;
 }
 
 void MPU_6050::selectMux(){
   ::selectMuxChannel(muxChannel);
 }
 
+void MPU_6050::computeNeutralAccelerations(int samples){
+  float axSum = 0, aySum = 0;
+  if(samples == 0) return;
+  for (int i = 0; i < samples; i++) {
+    readAccel();
+    axSum += ax_g;
+    aySum += ay_g;
+  }
+  neutralAX = axSum / samples;
+  neutralAY = aySum / samples;
+}
+
 float MPU_6050::getMinRoll(){ return minRoll; }
 float MPU_6050::getMaxRoll(){ return maxRoll; }
 float MPU_6050::getMinPitch(){ return minPitch; }
 float MPU_6050::getMaxPitch(){ return maxPitch; }
-float MPU_6050::getNeutralPitch(){ return neutralPitch; }
-float MPU_6050::getNeutralRoll(){ return neutralRoll; }
 
-float MPU_6050::getNeutralAX(){ return neutralAX; }
-float MPU_6050::getNeutralAY(){ return neutralAY; }
+/*
+    float minAY = 1.0f, maxAY = -1.0f;
+    float minAX = 1.0f, maxAX = -1.0f;
 
-float MPU_6050::getMaxAX(){ return maxAX;}
-float MPU_6050::getMinAX(){ return minAX;}
-float MPU_6050::getMaxAY(){ return maxAY;}
-float MPU_6050::getMinAY(){ return minAY;}
+    float neutralAX = 0.0f, neutralAY = 0.0f;
+*/
+float MPU_6050::getMaxAX() { return maxAX; }
+float MPU_6050::getMinAX() { return minAX; }
+float MPU_6050::getMaxAY() { return maxAY; }
+float MPU_6050::getMinAY() { return minAY; }
+float MPU_6050::getNeutralAX() { return neutralAX; }
+float MPU_6050::getNeutralAY() { return neutralAY; }
