@@ -1,5 +1,25 @@
 #include <Wire.h>
 #include "MPU_6050.h"
+#include <esp_now.h>
+#include <WiFi.h>
+
+//-- WIFI --
+#define MAX_PAYLOAD_SIZE
+
+const uint8_t peerMac[6] = {0x94, 0x54, 0xC5, 0xAF, 0x08, 0x14};
+
+enum MSG_TYPE { SYN, SYN_ACK, ACK, PAYLOAD};
+
+typedef struct {
+  uint8_t type;
+  uint8_t seq;
+  uint8_t payload[MAX_PAYLOAD_SIZE];
+} Packet;
+
+enum STATE { UNINITIALIZED, SENT_SYN, ESTABLISHED } state = UNINITIALIZED;
+
+void onDataRecv(const uint8_t *mac, const uint8_t *data, int len);
+void onDataSent(const uint8_t *mac, esp_now_send_status_t stat);
 
 //–– CONFIGURATION ––
 unsigned long palmSpikeTs = 0;
@@ -80,6 +100,24 @@ float ewma2_min_L=FLT_MAX, ewma2_max_L=-FLT_MAX;
 // Phase toggling
 bool phase = false;                     
 unsigned long lastSwitch = 0;
+
+//-- WIFI --
+void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
+  Packet p; memcpy(&p, data, sizeof(p));
+  if (p.type == SYN_ACK && state==SENT_SYN) {
+    Serial.println("← Received SYN_ACK, sending ACK");
+    Packet ack = {ACK, p.seq};
+    esp_now_send(peerMac, (uint8_t*)&ack, sizeof(ack));
+    state = ESTABLISHED;
+    Serial.println("Handshake complete");
+  }
+}
+
+void onDataSent(const uint8_t *mac, esp_now_send_status_t stat) {
+  Serial.printf("[send to %02X:%02X] %s\n",
+    mac[0], mac[1],
+    stat==ESP_NOW_SEND_SUCCESS?"OK":"FAIL");
+}
 
 //–– UTILITY ––
 static inline float calcAngleDeg(float dot, float m2p, float m2f) {
@@ -198,14 +236,28 @@ void fsmStep(ClickState& st,
   }
 }
 
-//-- DIRECTION FUNCTION --
-void checkDirection(){
-  
-}
-
 //–– SETUP ––
 void setup() {
   Serial.begin(115200);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  if (esp_now_init()!=ESP_OK) { Serial.println("ESP-NOW init fail"); while(1); }
+  esp_now_register_recv_cb((esp_now_recv_cb_t)onDataRecv);
+  esp_now_register_send_cb(onDataSent);
+
+  esp_now_peer_info_t peer={};
+  memcpy(peer.peer_addr, peerMac, 6);
+  peer.channel=1; peer.encrypt=false;
+  esp_now_add_peer(&peer);
+
+  // send SYN
+  Packet syn={SYN,0};
+  esp_now_send(peerMac,(uint8_t*)&syn,sizeof(syn));
+  state = SENT_SYN;
+  Serial.println(">> SYN sent");  
+
   Wire.begin(21,22);
   mpuPALM.initSensor(300,300,10000);
   mpuINDX.initSensor(0,0,0);
