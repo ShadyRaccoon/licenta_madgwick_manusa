@@ -83,6 +83,7 @@ struct Sample {
   float dotI, mag2PI, mag2FI;
   float dotL, mag2PL, mag2FL;
   unsigned long ts;
+  Direction dir;
 };
 static Sample latestSample;
 portMUX_TYPE sampleMux = portMUX_INITIALIZER_UNLOCKED;
@@ -153,13 +154,15 @@ void taskSensor(void* pv) {
     tmp.mag2PL = tmp.mag2PI;
     tmp.mag2FL = sq(mpuLITT.ax_g)+sq(mpuLITT.ay_g)+sq(mpuLITT.az_g);
     tmp.ts     = millis();
-    portENTER_CRITICAL(&sampleMux);
-      memcpy(&latestSample, &tmp, sizeof(tmp));
-    portEXIT_CRITICAL(&sampleMux);
     updateDirection(mpuPALM);
     if(lastDirection != direction)
       printDirection();
     lastDirection = direction;
+    tmp.dir = direction;
+    portENTER_CRITICAL(&sampleMux);
+      memcpy(&latestSample, &tmp, sizeof(tmp));
+    portEXIT_CRITICAL(&sampleMux);
+    
     vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
