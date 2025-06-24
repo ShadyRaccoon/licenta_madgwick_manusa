@@ -7,8 +7,10 @@
 enum DRONE_STATUS {GROUNDED, TAKING_OFF, AIRBORNE, LANDING};
 const char* DRONE_STATUS_NAME[] = {"GROUNDED", "TAKING_OFF", "AIBORNE", "LANDING"};
 DRONE_STATUS drone_status;
-
+DRONE_STATUS prev_drone_status;
 //-- WIFI --
+
+uint16_t seq;
 
 const uint8_t peerMac[6] = {0x94, 0x54, 0xC5, 0xAF, 0x08, 0x14};
 
@@ -120,7 +122,9 @@ void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
   }
 
   if(p.type == PAYLOAD && state == ESTABLISHED){
-    Serial.printf("%s \n", DRONE_STATUS_NAME[p.command]);
+    if((DRONE_STATUS)p.command != prev_drone_status)
+      Serial.printf("%s \n", DRONE_STATUS_NAME[p.command]);
+    prev_drone_status = (DRONE_STATUS)p.command;
   }
 }
 
@@ -191,6 +195,19 @@ void clickCounter(bool isIndex){
     delay(1000);
     clickCount = 0;      // reset
     lastClickTime = 0;
+    Packet p;
+    if(drone_status == GROUNDED){
+      p.type = PAYLOAD;
+      p.seq = seq++;
+      p.command = TAKE_OFF;
+      esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+    }
+    else if (drone_status == AIRBORNE){
+      p.type = PAYLOAD;
+      p.seq = seq++;
+      p.command = LAND;
+      esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+    }
   } else {
     clickCount = 1;
     lastClickTime = now;
@@ -252,6 +269,8 @@ void fsmStep(ClickState& st,
 //–– SETUP ––
 void setup() {
   Serial.begin(115200);
+
+  seq = 0;
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
