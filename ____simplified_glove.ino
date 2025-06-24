@@ -39,6 +39,8 @@ const int    RECALIB_INTERVAL = 200;    // not used for dual-EWMA, but kept for 
 const float  ALPHA_FAST       = 0.2f;   // EWMA α for fast tracking (0.0–1.0)
 const float  LIT_MIN_PEAK     = 0.15f;  // little finger floor for peak
 const float  LIT_MIN_FALL     = 0.08f;  // little finger floor for fall
+const float IDX_MIN_PEAK = 0.15f;   // same as little
+const float IDX_MIN_FALL = 0.08f;
 const float  MIN_ANGLE        = 20.0f;  // degrees for bounce-back
 const unsigned long MAX_DT1   = 800;    // ms between spike1 and spike2
 const unsigned long MAX_DT2   = 1200;   // ms total for both spikes
@@ -363,6 +365,8 @@ void loop() {
     // clamp little-finger floors
     peakL = max(peakL, LIT_MIN_PEAK);
     fallL = max(fallL, LIT_MIN_FALL);
+    peakI = max(peakI, IDX_MIN_PEAK);
+    fallI = max(fallI, IDX_MIN_FALL);
 
     // 7) Compute angles
     float angI = calcAngleDeg(s.dotI, s.mag2PI, s.mag2FI);
