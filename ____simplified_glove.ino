@@ -14,7 +14,7 @@ uint16_t seq;
 
 const uint8_t peerMac[6] = {0x94, 0x54, 0xC5, 0xAF, 0x08, 0x14};
 
-enum MSG_TYPE { SYN, SYN_ACK, ACK, PAYLOAD};
+enum MSG_TYPE { SYN, SYN_ACK, ACK, PAYLOAD, INIT_STATUS};
 
 typedef struct {
   uint8_t type;
@@ -118,13 +118,22 @@ void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
     Packet ack = {ACK, p.seq};
     esp_now_send(peerMac, (uint8_t*)&ack, sizeof(ack));
     state = ESTABLISHED;
+    Packet p = {INIT_STATUS, seq++, 0};
+    esp_now_send(peerMac, (uint8_t*)&p, sizeof(p));
     Serial.println("Handshake complete");
   }
 
+
   if(p.type == PAYLOAD && state == ESTABLISHED){
-    if((DRONE_STATUS)p.command != prev_drone_status)
+    drone_status = (DRONE_STATUS)p.command;
+    if(drone_status != prev_drone_status)
       Serial.printf("%s \n", DRONE_STATUS_NAME[p.command]);
     prev_drone_status = (DRONE_STATUS)p.command;
+  }
+
+  if(p.type == INIT_STATUS && state == ESTABLISHED){
+    drone_status = (DRONE_STATUS)p.command;
+    prev_drone_status = drone_status;
   }
 }
 
