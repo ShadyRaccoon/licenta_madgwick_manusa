@@ -3,8 +3,12 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
+//-- DRONE STATUS TRACKING -- 
+enum DRONE_STATUS {GROUNDED, TAKING_OFF, AIRBORNE, LANDING};
+const char* DRONE_STATUS_NAME[] = {"GROUNDED", "TAKING_OFF", "AIBORNE", "LANDING"};
+DRONE_STATUS drone_status;
+
 //-- WIFI --
-#define MAX_PAYLOAD_SIZE
 
 const uint8_t peerMac[6] = {0x94, 0x54, 0xC5, 0xAF, 0x08, 0x14};
 
@@ -13,7 +17,7 @@ enum MSG_TYPE { SYN, SYN_ACK, ACK, PAYLOAD};
 typedef struct {
   uint8_t type;
   uint8_t seq;
-  uint8_t payload[MAX_PAYLOAD_SIZE];
+  uint8_t command;
 } Packet;
 
 enum STATE { UNINITIALIZED, SENT_SYN, ESTABLISHED } state = UNINITIALIZED;
@@ -52,7 +56,7 @@ MPU_6050 mpuPALM(0x68,0,"PALM"),
         mpuLITT(0x68,3,"LITTLE");
 
 //-- PALM GESTURES --
-enum Direction { FRONT, BACK, LEFT, RIGHT, HOVER, NEUTRAL };
+enum Direction { FRONT, BACK, LEFT, RIGHT, HOVER, NEUTRAL, TAKE_OFF, LAND, NO_COMMAND };
 
 float FRONT_TH, BACK_TH, LEFT_TH, RIGHT_TH;
 
@@ -113,6 +117,10 @@ void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
     esp_now_send(peerMac, (uint8_t*)&ack, sizeof(ack));
     state = ESTABLISHED;
     Serial.println("Handshake complete");
+  }
+
+  if(p.type == PAYLOAD && state == ESTABLISHED){
+    Serial.printf("%s \n", DRONE_STATUS_NAME[p.command]);
   }
 }
 
