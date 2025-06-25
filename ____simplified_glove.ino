@@ -8,8 +8,8 @@ enum DRONE_STATUS {GROUNDED, TAKING_OFF, AIRBORNE, LANDING};
 const char* DRONE_STATUS_NAME[] = {"GROUNDED", "TAKING_OFF", "AIBORNE", "LANDING"};
 DRONE_STATUS drone_status;
 DRONE_STATUS prev_drone_status;
-//-- WIFI --
 
+//-- WIFI --
 uint16_t seq;
 
 const uint8_t peerMac[6] = {0x94, 0x54, 0xC5, 0xAF, 0x08, 0x14};
@@ -42,7 +42,7 @@ int palmBufPos      = 0;
 bool palmBufWarm    = false;
 
 const int    RECALIB_INTERVAL = 200;    // not used for dual-EWMA, but kept for reference
-const float  ALPHA_FAST       = 0.2f;   // EWMA α for fast tracking (0.0–1.0)
+const float  ALPHA_FAST       = 0.2f;   // EWMA alpha for fast tracking (0.0–1.0)
 const float  LIT_MIN_PEAK     = 0.15f;  // little finger floor for peak
 const float  LIT_MIN_FALL     = 0.08f;  // little finger floor for fall
 const float IDX_MIN_PEAK = 0.15f;   // same as little
@@ -58,7 +58,7 @@ MPU_6050 mpuPALM(0x68,0,"PALM"),
         mpuLITT(0x68,3,"LITTLE");
 
 //-- PALM GESTURES --
-enum Direction { FRONT, BACK, LEFT, RIGHT, HOVER, NEUTRAL, TAKE_OFF, LAND, NO_COMMAND };
+enum Direction { FRONT, BACK, LEFT, RIGHT, HOVER, NEUTRAL, TAKE_OFF, LAND };
 
 float FRONT_TH, BACK_TH, LEFT_TH, RIGHT_TH;
 
@@ -138,9 +138,9 @@ void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
 }
 
 void onDataSent(const uint8_t *mac, esp_now_send_status_t stat) {
-  Serial.printf("[send to %02X:%02X] %s\n",
-    mac[0], mac[1],
-    stat==ESP_NOW_SEND_SUCCESS?"OK":"FAIL");
+  if(ESP_NOW_SEND_SUCCESS == FAIL)
+    Serial.printf("[send to %02X:%02X:%02X:%02X:%02X:%02X] FAIL\n",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 //–– UTILITY ––
@@ -154,7 +154,9 @@ static inline float calcAngleDeg(float dot, float m2p, float m2f) {
 void taskSensor(void* pv) {
   Sample tmp;
   while (true) {
-    mpuPALM.readAccel(); mpuINDX.readAccel(); mpuLITT.readAccel();
+    mpuPALM.readAccel(); 
+    mpuINDX.readAccel(); 
+    mpuLITT.readAccel();
     tmp.palmMag = sqrt(
       sq(mpuPALM.ax_g) +
       sq(mpuPALM.ay_g) +
@@ -239,35 +241,28 @@ void fsmStep(ClickState& st,
     case IDLE:
       if (rel > peak) {
         st = SPIKE1; 
-        // Serial.printf("[%s] SPIKE1\n", name);
       }
       break;
     case SPIKE1:
       if (rel < fall) {
         t1 = now; a1 = angle; st = WAIT1;
-      //  Serial.printf("[%s] FALL→WAIT1\n", name);
       }
       break;
     case WAIT1:
       if (now - t1 > MAX_DT1) st = IDLE;
       else if (rel > peak) {
         st = SPIKE2;
-      //  Serial.printf("[%s] SPIKE2\n", name);
       }
       break;
     case SPIKE2:
       if (rel < fall) {
         t2 = now; a2 = angle; st = VALIDATE;
-        //Serial.printf("[%s] FALL2→VALIDATE\n", name);
       }
       break;
     case VALIDATE: {
       unsigned long dt = t2 - t1;
       float da = fabs(a2 - a1);
-      //Serial.printf("[%s] VALIDATE dt=%lums da=%.2f°\n", name, dt, da);
       if (dt < MAX_DT2 && da > MIN_ANGLE){
-        //Serial.printf("[%s] VALIDATE dt=%lums da=%.2f° rel=%.2fg palm=%.2fg diff=%.2fg\n",
-        //        name, dt, da, rel, palmMag, palmMag-rel);
         clickCounter(strcmp(name, "INDEX") == 0);
       }
       st = IDLE;
@@ -318,21 +313,21 @@ void setup() {
 
 //–– MAIN LOOP (core 1) ––
 void loop() {
-  // 1) Grab latest preprocessed sample
+  // grab latest preprocessed sample
   Sample s;
   portENTER_CRITICAL(&sampleMux);
     memcpy(&s, &latestSample, sizeof(s));
   portEXIT_CRITICAL(&sampleMux);
   float rawPalm = s.palmMag;
 
-  // 2) Fill steady‐hand ring buffer
+  // fill steady‐hand ring buffer
   palmBuf[palmBufPos] = rawPalm;
   if (++palmBufPos >= PALM_BUF_SZ) {
     palmBufPos = 0;
     palmBufWarm = true;
   }
 
-  // 3) Compute steady‐hand mean
+  // compute steady‐hand mean
   float palmMean = rawPalm;
   if (palmBufWarm) {
     palmMean = 0;
@@ -340,12 +335,12 @@ void loop() {
     palmMean /= PALM_BUF_SZ;
   }
 
-  // 4) Update slow Palm EWMA
+  // update slow Palm EWMA
   palmEWMA = PALM_ALPHA * palmEWMA + (1 - PALM_ALPHA) * rawPalm;
   //Serial.printf("PALM raw=%.2fg  EWMA=%.2fg  mean=%.2fg\n",
   //              rawPalm, palmEWMA, palmMean);
 
-  // 5) Gate if palm is spiking or unsteady
+  // gate if palm is spiking or unsteady
   if (palmEWMA > PALM_THRESHOLD || fabs(rawPalm - palmMean) > PALM_STEADY_DEG) {
     palmSpikeTs = millis();
     palmBufWarm = false;
@@ -358,11 +353,11 @@ void loop() {
     return;
   }
 
-  // 2) Compute rel-accels
+  // compute rel-accels
   float relI = s.relI;
   float relL = s.relL;
 
-  // 3) Select which EWMA slot to update this phase
+  // select which EWMA slot to update this phase
   float &eI    = phase ? ewma2_I    : ewma1_I;
   float &minI  = phase ? ewma2_min_I : ewma1_min_I;
   float &maxI  = phase ? ewma2_max_I : ewma1_max_I;
@@ -370,7 +365,7 @@ void loop() {
   float &minL  = phase ? ewma2_min_L : ewma1_min_L;
   float &maxL  = phase ? ewma2_max_L : ewma1_max_L;
 
-  // 4) Update EWMA & extrema for this slot
+  // update EWMA & extrema for this slot
   eI   = ALPHA_FAST * eI + (1 - ALPHA_FAST) * relI;
   minI = min(minI, eI);
   maxI = max(maxI, eI);
@@ -379,7 +374,7 @@ void loop() {
   minL = min(minL, eL);
   maxL = max(maxL, eL);
 
-  // 5) After PHASE_MS, flip phase and reset the newly inactive slot
+  // after PHASE_MS, flip phase and reset the newly inactive slot
   if (millis() - lastSwitch >= PHASE_MS) {
     phase = !phase;
     lastSwitch = millis();
@@ -392,29 +387,56 @@ void loop() {
     }
   }
 
-  // 6) Once both slots have been touched at least once, derive thresholds
+  // once both slots have been touched at least once, derive thresholds
   if (lastSwitch > 0) {
     float peakI = max(ewma1_max_I, ewma2_max_I);
     float fallI = min(ewma1_min_I, ewma2_min_I);
     float peakL = max(ewma1_max_L, ewma2_max_L);
     float fallL = min(ewma1_min_L, ewma2_min_L);
-    // clamp little-finger floors
+    // clamp floors
     peakL = max(peakL, LIT_MIN_PEAK);
     fallL = max(fallL, LIT_MIN_FALL);
     peakI = max(peakI, IDX_MIN_PEAK);
     fallI = max(fallI, IDX_MIN_FALL);
 
-    // 7) Compute angles
+    // compute angles
     float angI = calcAngleDeg(s.dotI, s.mag2PI, s.mag2FI);
     float angL = calcAngleDeg(s.dotL, s.mag2PL, s.mag2FL);
 
-    // 8) Run the FSMs
+    // run the FSMs
     fsmStep(stI, s.relI, s.palmMag, angI, t1I, t2I, a1I, a2I, peakI, fallI, "INDEX");
     fsmStep(stL, s.relL, s.palmMag, angL, t1L, t2L, a1L, a2L, peakL, fallL, "LITTLE");
+    
+    Packet p;
+    seq += 1;
+    //verificare landing sau taking off -> delay 5 si return
+    if(drone_status == TAKING_OFF || drone_status == LANDING){
+      delay(5);
+      return;
+    }
 
+    //verificare grounded -> trimte neutral
+    if(drone_status == GROUNDED){
+      p.type = PAYLOAD;
+      p.seq = seq;
+      p.command = s.dir;
+      esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+      delay(5);
+      return;
+    }
+
+    //verificare pauza -> trimitere pauseDirection
+
+    //trimite comanda normala -> trimitere comanda curenta
+    p.type = PAYLOAD;
+    p.seq = seq;
+    p.command = s.dir;
+    esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+    delay(5);
+    return;
   }
 
-  // 9) Yield to maintain ~200Hz
+  // maintain ~200Hz
   delay(5);
 }
 
@@ -433,12 +455,16 @@ void updateDirection(MPU_6050 &mpu){
   uint8_t right = (mpu.ax_g > RIGHT_TH) ? 1 : 0;
 
   if(front + back + left + right != 1 && front + back + left + right != 0) return;
-  if(front + back + left + right == 0) direction = HOVER;
+  if(drone_status == AIRBORNE){
+    if(front + back + left + right == 0) direction = HOVER;
 
-  direction = (front == 1) ? FRONT : direction;
-  direction = (back == 1) ? BACK : direction;
-  direction = (left == 1) ? LEFT : direction;
-  direction = (right == 1) ? RIGHT : direction;
+    direction = (front == 1) ? FRONT : direction;
+    direction = (back == 1) ? BACK : direction;
+    direction = (left == 1) ? LEFT : direction;
+    direction = (right == 1) ? RIGHT : direction;
+  }
+
+  if(drone_status == GROUNDED) direction = NEUTRAL;
 }
 
 void printDirection(){
