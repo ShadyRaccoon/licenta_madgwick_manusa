@@ -70,6 +70,9 @@ void updateDirection(MPU_6050 &mpu);
 void printDirection();
 
 //–– CLICK FSM ––
+bool pauseMode;
+Direction pauseDirection;
+
 enum ClickState { IDLE, SPIKE1, WAIT1, SPIKE2, VALIDATE };
 ClickState stI=IDLE, stL=IDLE;
 unsigned long t1I,t2I,t1L,t2L;
@@ -193,7 +196,7 @@ void taskSensor(void* pv) {
 }
 
 //–– CLICK FSM FUNCTION & HELPER––
-void clickCounter(bool isIndex){
+void clickCounter(bool isIndex, Direction dir){
   unsigned long now = millis();
 
   unsigned long &lastClickTime = isIndex ? lastClickTimeI : lastClickTimeL;
@@ -207,17 +210,22 @@ void clickCounter(bool isIndex){
     clickCount = 0;      // reset
     lastClickTime = 0;
     Packet p;
-    if(drone_status == GROUNDED){
-      p.type = PAYLOAD;
-      p.seq = seq++;
-      p.command = TAKE_OFF;
-      esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
-    }
-    else if (drone_status == AIRBORNE){
-      p.type = PAYLOAD;
-      p.seq = seq++;
-      p.command = LAND;
-      esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+    if(!isIndex){
+      if(drone_status == GROUNDED){
+        p.type = PAYLOAD;
+        p.seq = seq++;
+        p.command = TAKE_OFF;
+        esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+      }
+      else if (drone_status == AIRBORNE){
+        p.type = PAYLOAD;
+        p.seq = seq++;
+        p.command = LAND;
+        esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+      }
+    } else {
+      pauseMode = !pauseMode;
+      pauseDirection = dir;
     }
   } else {
     clickCount = 1;
@@ -235,7 +243,8 @@ void fsmStep(ClickState& st,
              float& a2,
              float peak,
              float fall,
-             const char* name) {
+             const char* name,
+             Direction dir) {
   unsigned long now = millis();
   switch (st) {
     case IDLE:
@@ -263,7 +272,7 @@ void fsmStep(ClickState& st,
       unsigned long dt = t2 - t1;
       float da = fabs(a2 - a1);
       if (dt < MAX_DT2 && da > MIN_ANGLE){
-        clickCounter(strcmp(name, "INDEX") == 0);
+        clickCounter(strcmp(name, "INDEX") == 0, dir);
       }
       st = IDLE;
     } break;
@@ -293,6 +302,9 @@ void setup() {
   esp_now_send(peerMac,(uint8_t*)&syn,sizeof(syn));
   state = SENT_SYN;
   Serial.println(">> SYN sent");  
+
+  //gestures
+  pauseMode = false;
 
   Wire.begin(21,22);
   mpuPALM.initSensor(300,300,10000);
@@ -404,8 +416,8 @@ void loop() {
     float angL = calcAngleDeg(s.dotL, s.mag2PL, s.mag2FL);
 
     // run the FSMs
-    fsmStep(stI, s.relI, s.palmMag, angI, t1I, t2I, a1I, a2I, peakI, fallI, "INDEX");
-    fsmStep(stL, s.relL, s.palmMag, angL, t1L, t2L, a1L, a2L, peakL, fallL, "LITTLE");
+    fsmStep(stI, s.relI, s.palmMag, angI, t1I, t2I, a1I, a2I, peakI, fallI, "INDEX", s.dir);
+    fsmStep(stL, s.relL, s.palmMag, angL, t1L, t2L, a1L, a2L, peakL, fallL, "LITTLE", s.dir);
     
     Packet p;
     seq += 1;
@@ -415,7 +427,7 @@ void loop() {
       return;
     }
 
-    //verificare grounded -> trimte neutral
+    //verificare grounded -> trimite neutral
     if(drone_status == GROUNDED){
       p.type = PAYLOAD;
       p.seq = seq;
@@ -426,6 +438,14 @@ void loop() {
     }
 
     //verificare pauza -> trimitere pauseDirection
+    if(pauseMode){
+      p.type = PAYLOAD;
+      p.seq = seq;
+      p.command = pauseDirection;
+      esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
+      delay(5);
+      return;
+    }
 
     //trimite comanda normala -> trimitere comanda curenta
     p.type = PAYLOAD;
