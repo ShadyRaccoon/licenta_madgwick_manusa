@@ -282,6 +282,7 @@ void fsmStep(ClickState& st,
 //–– SETUP ––
 void setup() {
   Serial.begin(115200);
+  while(!Serial){}
 
   seq = 0;
 
