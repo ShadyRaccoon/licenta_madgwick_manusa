@@ -20,6 +20,7 @@ typedef struct {
   uint8_t type;
   uint8_t seq;
   uint8_t command;
+  uint latency;
 } Packet;
 
 enum STATE { UNINITIALIZED, SENT_SYN, ESTABLISHED } state = UNINITIALIZED;
@@ -327,6 +328,8 @@ void setup() {
 //–– MAIN LOOP (core 1) ––
 void loop() {
   // grab latest preprocessed sample
+  uint startGestureDetection  = millis();
+  uint finishGestureDetection = millis();
   Sample s;
   portENTER_CRITICAL(&sampleMux);
     memcpy(&s, &latestSample, sizeof(s));
@@ -433,6 +436,8 @@ void loop() {
       p.type = PAYLOAD;
       p.seq = seq;
       p.command = s.dir;
+      finishGestureDetection = millis();
+      p.latency = finishGestureDetection - startGestureDetection;
       esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
       delay(5);
       return;
@@ -443,6 +448,8 @@ void loop() {
       p.type = PAYLOAD;
       p.seq = seq;
       p.command = pauseDirection;
+      finishGestureDetection = millis();
+      p.latency = finishGestureDetection - startGestureDetection;
       esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
       delay(5);
       return;
@@ -452,6 +459,8 @@ void loop() {
     p.type = PAYLOAD;
     p.seq = seq;
     p.command = s.dir;
+    finishGestureDetection = millis();
+    p.latency = finishGestureDetection - startGestureDetection;
     esp_now_send(peerMac, (uint8_t*) &p, sizeof(p));
     delay(5);
     return;
