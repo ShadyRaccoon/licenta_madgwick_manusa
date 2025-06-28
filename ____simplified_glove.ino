@@ -153,7 +153,7 @@ static inline float calcAngleDeg(float dot, float m2p, float m2f) {
   return acos(c) * 180.0f/PI;
 }
 
-//–– SENSOR TASK (unchanged) ––
+//–– SENSOR TASK ––
 void taskSensor(void* pv) {
   Sample tmp;
   while (true) {
@@ -180,8 +180,8 @@ void taskSensor(void* pv) {
                + mpuPALM.ay_g*mpuLITT.ay_g
                + mpuPALM.az_g*mpuLITT.az_g;
     tmp.mag2PL = tmp.mag2PI;
-    tmp.mag2FL = sq(mpuLITT.ax_g)+sq(mpuLITT.ay_g)+sq(mpuLITT.az_g);
-    tmp.ts     = millis();
+      tmp.mag2FL = sq(mpuLITT.ax_g)+sq(mpuLITT.ay_g)+sq(mpuLITT.az_g);
+      tmp.ts     = millis();
     updateDirection(mpuPALM);
     if(lastDirection != direction)
       printDirection();
@@ -350,9 +350,7 @@ void loop() {
 
   // update slow Palm EWMA
   palmEWMA = PALM_ALPHA * palmEWMA + (1 - PALM_ALPHA) * rawPalm;
-  //Serial.printf("PALM raw=%.2fg  EWMA=%.2fg  mean=%.2fg\n",
-  //              rawPalm, palmEWMA, palmMean);
-
+  
   // gate if palm is spiking or unsteady
   if (palmEWMA > PALM_THRESHOLD || fabs(rawPalm - palmMean) > PALM_STEADY_DEG) {
     palmSpikeTs = millis();
@@ -472,8 +470,8 @@ void setDirectionThresholds(MPU_6050 &mpu){
 void updateDirection(MPU_6050 &mpu){
   uint8_t front = (mpu.ay_g < FRONT_TH) ? 1 : 0; //flexed => negative roll
   uint8_t back  = (mpu.ay_g > BACK_TH) ? 1 : 0;
-  uint8_t left  = (mpu.ax_g < LEFT_TH) ? 1 : 0;
-  uint8_t right = (mpu.ax_g > RIGHT_TH) ? 1 : 0;
+  uint8_t left  = (mpu.ax_g > LEFT_TH) ? 1 : 0;
+  uint8_t right = (mpu.ax_g < RIGHT_TH) ? 1 : 0;
 
   if(front + back + left + right != 1 && front + back + left + right != 0) return;
   if(drone_status == AIRBORNE){

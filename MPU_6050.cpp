@@ -64,7 +64,6 @@ void MPU_6050::findROM(long time){
     if(ax_g < minAX) minAX = ax_g;
     if(ay_g > maxAY) maxAY = ay_g;
     if(ay_g < minAY) minAY = ay_g; 
-    //delay(5);
   }
 }
 
@@ -133,7 +132,6 @@ void MPU_6050::computeGyroOffsets(int samples) {
   for (int i = 0; i < samples; i++) {
     readRaw();
     sumX += gx; sumY += gy; sumZ += gz;
-    //delay(10);
   }
   gyroOffsetX = (sumX / samples) / 65.5f;
   gyroOffsetY = (sumY / samples) / 65.5f;
